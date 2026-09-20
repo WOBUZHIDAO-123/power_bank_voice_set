@@ -66,19 +66,14 @@ export async function compilePackage(zipBytes, expectedLanguage, { signal, onPro
     if (rows.length > 255) throw new Error('音频试烧最多支持 255 个文件');
     const used = new Set();
     const files = rows.map(([path, bytes]) => {
-      const prefix = /^(\d{3})(?:[-_.]|$)/.exec(path.split('/').at(-1));
-      const candidate = prefix ? Number(prefix[1]) : 0;
-      const id = candidate >= 1 && candidate <= 255 && !used.has(candidate) ? candidate : null;
-      if (id) used.add(id);
+      const prefix = /^(\d{3})(?:[-_.])/.exec(path.split('/').at(-1));
+      const id = prefix ? Number(prefix[1]) : 0;
+      if (id < 1 || id > 255) throw new Error('音频文件名需以 001～255 的三位编号开头，不自动改号：' + path);
+      if (used.has(id)) throw new Error('音频编号重复，不自动改号：' + path);
+      if (!bytes.length) throw new Error('音频文件为空：' + path);
+      used.add(id);
       return { id, path, bytes, extension: path.split('.').at(-1).toLowerCase() };
     });
-    for (const file of files) {
-      if (!file.bytes.length) throw new Error('音频文件为空：' + file.path);
-      if (!file.id) {
-        let id = 1; while (used.has(id)) id++;
-        file.id = id; used.add(id);
-      }
-    }
     checkCancelled(signal);
     onProgress('生成音频试烧镜像', 0);
     const image = buildFatImage(files);
