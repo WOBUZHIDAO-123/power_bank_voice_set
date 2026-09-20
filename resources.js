@@ -1,15 +1,17 @@
-﻿import { languageTag } from './binary.js';
+import { languageTag } from './binary.js';
 const HISTORY_KEY='voice-writer.last-success.v1';
 export function parseCatalog(data, base) {
   if (!Array.isArray(data)) throw new Error('语种清单必须是数组');
   const seen = new Set();
   return data.map(item => {
-    if (!item || !['id', 'name', 'package', 'languageTag'].every(
+    if (!item || !['id', 'name', 'languageTag'].every(
       key => typeof item[key] === 'string' && item[key].trim()) || seen.has(item.id)) {
       throw new Error('语种条目不完整（需要 ZIP 地址和语言标识）或编号重复');
     }
     seen.add(item.id);
     const row = { id: item.id, name: item.name, languageTag: languageTag(item.languageTag) };
+    if (item.package === null) return { ...row, package: null };
+    if (typeof item.package !== 'string' || !item.package.trim()) throw new Error('语种条目不完整：需要 ZIP 地址或明确设为 null');
     for (const key of ['package']) {
       const url = new URL(item[key], base);
       if (url.origin !== new URL(base).origin || !['http:', 'https:'].includes(url.protocol) ||

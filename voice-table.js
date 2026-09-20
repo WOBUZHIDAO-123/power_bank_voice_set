@@ -41,7 +41,7 @@ export function validateTable(bytes, imageCRC, selectedLanguage, maxSize = 4096)
   const poolLength = (bytes.length - poolOffset) / 2;
   for (let index = 0; index < poolLength; index++) {
     const fileId = view.getUint16(poolOffset + index * 2, true);
-    if (fileId < 1 || fileId > 999) throw new Error('播放表文件编号必须为 1～999');
+    if (fileId < 1 || fileId > 255) throw new Error('播放表文件编号必须为 1～255');
   }
   const keys = new Set();
   for (let index = 0; index < entryCount; index++) {

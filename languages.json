@@ -1,1 +1,62 @@
-[]
+[
+  {
+    "id": "zh-CN",
+    "name": "中文（简体）",
+    "languageTag": "zh-CN",
+    "package": null
+  },
+  {
+    "id": "en-US",
+    "name": "英语",
+    "languageTag": "en-US",
+    "package": null
+  },
+  {
+    "id": "ja-JP",
+    "name": "日语",
+    "languageTag": "ja-JP",
+    "package": null
+  },
+  {
+    "id": "ko-KR",
+    "name": "韩语",
+    "languageTag": "ko-KR",
+    "package": null
+  },
+  {
+    "id": "fr-FR",
+    "name": "法语",
+    "languageTag": "fr-FR",
+    "package": null
+  },
+  {
+    "id": "de-DE",
+    "name": "德语",
+    "languageTag": "de-DE",
+    "package": null
+  },
+  {
+    "id": "es-ES",
+    "name": "西班牙语",
+    "languageTag": "es-ES",
+    "package": null
+  },
+  {
+    "id": "pt-BR",
+    "name": "葡萄牙语",
+    "languageTag": "pt-BR",
+    "package": null
+  },
+  {
+    "id": "ru-RU",
+    "name": "俄语",
+    "languageTag": "ru-RU",
+    "package": null
+  },
+  {
+    "id": "ar-SA",
+    "name": "阿拉伯语",
+    "languageTag": "ar-SA",
+    "package": null
+  }
+]

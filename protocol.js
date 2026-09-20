@@ -4,10 +4,10 @@ import { checkCancelled } from './zip.js';
 export { crc32 } from './binary.js';
 export const MAX_IMAGE_SIZE = 0x800000;
 export const TARGET = { NONE: 0, IMAGE: 1, TABLE: 2 };
-export const CMD={INFO:1,START:2,STATUS:3,DATA:4,FINISH:5,ABORT:6,TABLE_START:7,TABLE_DATA:8,TABLE_FINISH:9,TABLE_INFO:10};
+export const CMD={INFO:1,START:2,STATUS:3,DATA:4,FINISH:5,ABORT:6,TABLE_START:7,TABLE_DATA:8,TABLE_FINISH:9,TABLE_INFO:10,VOICE_PLAY_EVENT:11,VOICE_QUEUE:12,VOICE_CONTROL:13};
 export const TYPE={ACK:128,NACK:129,INFO:130,STATUS:131,TABLE_INFO:132};
 export const STATE={IDLE:0,ERASING:1,READY:2,WRITING:3,VERIFYING:4,SUCCESS:5,ERROR:6,ABORT:7};
-const errors=['无错误','协议版本不匹配','通信长度错误','通信校验失败','设备不支持此命令','设备状态不允许此操作','镜像不符合要求','数据块顺序错误','硬件语音存储未就绪','存储清理失败','存储写入失败','写入内容检查失败','设备接收溢出','播放表格式或内容不合法','硬件播放表存储未就绪','播放表准备或写入失败','播放表检查或提交失败'];
+const errors=['无错误','协议版本不匹配','通信长度错误','通信校验失败','设备不支持此命令','设备状态不允许此操作','镜像不符合要求','数据块顺序错误','硬件语音存储未就绪','存储清理失败','存储写入失败','写入内容检查失败','设备接收溢出','播放表格式或内容不合法','硬件播放表存储未就绪','播放表准备或写入失败','播放表检查或提交失败','设备尚无有效播放表','播放表中没有此事件或数值','硬件播放串口发送失败','播放队列或音频编号无效（1～255）'];
 export class DeviceError extends Error{constructor(code,expected){super(errors[code]??`设备错误 ${code}`);this.code=code;this.expected=expected;}}
 export function frame(type,seq,payload=new Uint8Array()){const b=new Uint8Array(15+payload.length),v=new DataView(b.buffer);b.set([0x55,0xaa,1,type,0]);v.setUint32(5,seq,true);v.setUint16(9,payload.length,true);b.set(payload,11);v.setUint32(11+payload.length,crc32(b.subarray(2,11+payload.length)),true);return b;}
 export class Decoder{
@@ -24,7 +24,7 @@ export function parseResponse(f){const lengths={[TYPE.ACK]:9,[TYPE.NACK]:5,[TYPE
  if(v.getUint8(0)>7||v.getUint8(2)>2||v.getUint8(3)!==0)throw new Error('设备状态响应无效');
  return {state:v.getUint8(0),error:v.getUint8(1),target:v.getUint8(2),expected:v.getUint32(4,true),completed:v.getUint32(8,true),size:v.getUint32(12,true)};
 }
-export function validateInfo(info){if(info.version!==1||info.chunk!==1024||info.addressBytes!==3||info.capacity!==MAX_IMAGE_SIZE||info.firmware!==0x10200||info.state>7)throw new Error('设备协议或容量不兼容，需要 1.2.0、8 MiB 设备');const names=['音频镜像更新','可变镜像长度','播放表更新','播放表摘要查询'];const missing=names.filter((name,bit)=>!(info.capabilities&(1<<bit)));if(missing.length)throw new Error(`设备缺少必要功能：${missing.join('、')}`);if(!Number.isInteger(info.tableMaxSize)||info.tableMaxSize<48||info.tableMaxSize>4096)throw new Error('设备播放表容量无效');return info;}
+export function validateInfo(info){if(info.version!==1||info.chunk!==1024||info.addressBytes!==3||info.capacity!==MAX_IMAGE_SIZE||info.firmware!==0x10300||info.state>7)throw new Error('设备协议或容量不兼容，需要 1.3.0、8 MiB 设备');const names=['音频镜像更新','可变镜像长度','播放表更新','播放表摘要查询'];const missing=names.filter((name,bit)=>!(info.capabilities&(1<<bit)));if(missing.length)throw new Error(`设备缺少必要功能：${missing.join('、')}`);if(!Number.isInteger(info.tableMaxSize)||info.tableMaxSize<48||info.tableMaxSize>4096)throw new Error('设备播放表容量无效');return info;}
 export function validateImage(bytes,capacity=MAX_IMAGE_SIZE){const n=bytes.length;if(n<512||n>Math.min(capacity,MAX_IMAGE_SIZE)||n%512)throw new Error('镜像大小必须为 512 字节的整数倍，且不超过 8 MiB 和设备容量');const v=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);const sector=v.getUint16(11,true),cluster=v.getUint8(13),reserved=v.getUint16(14,true),fats=v.getUint8(16),roots=v.getUint16(17,true),small=v.getUint16(19,true),large=v.getUint32(32,true),fatSize=v.getUint16(22,true);const total=small||large;
  if(bytes[510]!==85||bytes[511]!==170||![512,1024,2048,4096].includes(sector)||!cluster||(cluster&(cluster-1))||cluster>128||!reserved||!fats||!roots||!fatSize||(small&&large)||total*sector!==n)throw new Error('镜像必须是完整 FAT12/FAT16 卷，卷大小必须与文件一致');const dataSectors=total-reserved-fats*fatSize-Math.ceil(roots*32/sector);const clusters=Math.floor(dataSectors/cluster);if(clusters<1||clusters>=65525||fatSize*sector<Math.ceil((clusters+2)*(clusters<4085?1.5:2)))throw new Error('镜像 FAT 布局无效或不是 FAT12/FAT16');return crc32(bytes);}
 export class SerialLink {
@@ -85,7 +85,11 @@ export class SerialLink {
         });
         return parseResponse(reply);
       } catch (error) {
-        // 1.2.0 only guarantees DATA replay. Observe state instead of restarting a task.
+        // 1.3.0 only guarantees DATA replay. Observe state instead of restarting a task.
+        if (error.timeout && [CMD.VOICE_PLAY_EVENT, CMD.VOICE_QUEUE, CMD.VOICE_CONTROL].includes(type)) {
+          error.message = '播放命令响应超时，设备可能已接收；未自动重发，请确认设备状态';
+          throw error;
+        }
         if (error.timeout && [CMD.START, CMD.TABLE_START, CMD.FINISH, CMD.TABLE_FINISH].includes(type)) throw error;
         const retryCRC = error instanceof DeviceError && error.code === 3 &&
           ![CMD.DATA, CMD.TABLE_DATA].includes(type);
@@ -138,6 +142,42 @@ export class Burner {
 
   async status() {
     return this.call(CMD.STATUS, undefined, TYPE.STATUS);
+  }
+
+
+  async voiceCommand(type, payload) {
+    if (this.running) throw new Error('设备操作进行中，请等待结束');
+    this.running = true;
+    try {
+      await this.info();
+      const status = await this.status();
+      if ([STATE.ERASING, STATE.READY, STATE.WRITING, STATE.VERIFYING].includes(status.state)) {
+        throw new Error('设备正在更新语音，暂不能发送播放命令');
+      }
+      return await this.call(type, payload);
+    } finally { this.running = false; }
+  }
+
+  playEvent(event, value) {
+    if (!Number.isInteger(event) || event < 0 || event > 65535 ||
+        !Number.isInteger(value) || value < -32768 || value > 32767) throw new Error('事件或数值超出范围');
+    const payload = new Uint8Array(4), view = new DataView(payload.buffer);
+    view.setUint16(0, event, true); view.setInt16(2, value, true);
+    return this.voiceCommand(CMD.VOICE_PLAY_EVENT, payload);
+  }
+
+  queueVoice(ids) {
+    if (!Array.isArray(ids) || ids.length < 1 || ids.length > 8 ||
+        ids.some(id => !Number.isInteger(id) || id < 1 || id > 255)) throw new Error('队列需要 1～8 个音频编号，每个编号为 1～255');
+    const payload = new Uint8Array(1 + ids.length * 2), view = new DataView(payload.buffer);
+    payload[0] = ids.length;
+    ids.forEach((id, i) => view.setUint16(1 + i * 2, id, true));
+    return this.voiceCommand(CMD.VOICE_QUEUE, payload);
+  }
+
+  controlVoice(action) {
+    if (![0, 1, 2].includes(action)) throw new Error('播放控制动作无效');
+    return this.voiceCommand(CMD.VOICE_CONTROL, new Uint8Array([action]));
   }
 
   checkTarget(reply, target) {
@@ -207,7 +247,7 @@ export class Burner {
     }
     await this.transfer(bytes, crc, TARGET.IMAGE);
     try {
-      // TABLE_START follows image SUCCESS directly, as specified by 1.2.0.
+      // TABLE_START follows image SUCCESS directly, as specified by 1.3.0.
       await this.transfer(tableBytes, table.crc, TARGET.TABLE, crc);
     } catch (error) {
       if (error.name === 'AbortError' || this.signal?.aborted) throw error;

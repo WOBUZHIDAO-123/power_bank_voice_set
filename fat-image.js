@@ -1,10 +1,10 @@
 // Deterministic FAT12/FAT16 superfloppy: 512-byte sectors, two FATs, root files only.
 // Audio bytes are unchanged; ASCII 8.3 names keep the protocol's three-digit FileId.
 export function buildFatImage(files) {
-  if (!Array.isArray(files) || !files.length || files.length > 999) throw new Error('音频文件数量必须为 1～999');
+  if (!Array.isArray(files) || !files.length || files.length > 255) throw new Error('音频文件数量必须为 1～255');
   const sorted = [...files].sort((a, b) => a.id - b.id), ids = new Set();
   for (const file of sorted) {
-    if (!Number.isInteger(file.id) || file.id < 1 || file.id > 999 || ids.has(file.id) ||
+    if (!Number.isInteger(file.id) || file.id < 1 || file.id > 255 || ids.has(file.id) ||
         !(file.bytes instanceof Uint8Array) || !file.bytes.length || !['mp3', 'wav'].includes(file.extension)) throw new Error('镜像音频文件不合法');
     ids.add(file.id);
   }

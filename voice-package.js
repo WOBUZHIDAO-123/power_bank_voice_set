@@ -1,4 +1,4 @@
-﻿import { crc32, languageTag } from './binary.js';
+import { crc32, languageTag } from './binary.js';
 import { unzip, packagePath, checkCancelled } from './zip.js';
 import { buildFatImage } from './fat-image.js';
 import { validateTable, readTableLanguage } from './voice-table.js';
@@ -85,15 +85,15 @@ export async function compilePackage(zipBytes, expectedLanguage, { signal, onPro
   try { manifest = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(manifestBytes)); }
   catch { throw new Error('voice.json 不是有效的 UTF-8 JSON'); }
   if (!manifest || manifest.formatVersion !== 1 || !Array.isArray(manifest.files) ||
-      !manifest.files.length || manifest.files.length > 999 || !Array.isArray(manifest.entries) || manifest.entries.length !== 206) {
-    throw new Error('voice.json 需包含版本 1、1～999 个音频和 206 条完整事件映射');
+      !manifest.files.length || manifest.files.length > 255 || !Array.isArray(manifest.entries) || manifest.entries.length !== 206) {
+    throw new Error('voice.json 需包含版本 1、1～255 个音频和 206 条完整事件映射');
   }
   const tag = languageTag(manifest.languageTag);
   if (tag !== languageTag(expectedLanguage ?? tag)) throw new Error('ZIP 的语言标识与所选语种不一致');
   const used = new Set(['voice.json']), ids = new Set();
   let audioSize = 0;
   const files = manifest.files.map(file => {
-    if (!file || !Number.isInteger(file.id) || file.id < 1 || file.id > 999 || ids.has(file.id)) throw new Error('音频编号必须为不重复的 1～999');
+    if (!file || !Number.isInteger(file.id) || file.id < 1 || file.id > 255 || ids.has(file.id)) throw new Error('音频编号必须为不重复的 1～255');
     const path = packagePath(file.path), basename = path.split('/').at(-1);
     if (!new RegExp('^' + String(file.id).padStart(3, '0') + '(?:[-_.])').test(basename)) throw new Error('音频文件名需以对应的三位编号开头');
     const bytes = archive.get(path);
