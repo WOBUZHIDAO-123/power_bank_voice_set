@@ -41,7 +41,7 @@ async function inflate(bytes, expected, signal) {
 }
 
 // PKWARE APPNOTE 6.3.10: ordinary single-disk ZIP, stored and Deflate only.
-export async function unzip(bytes, { signal } = {}) {
+export async function unzip(bytes, { signal, include = () => true } = {}) {
   checkCancelled(signal);
   if (!(bytes instanceof Uint8Array) || bytes.length < 22 || bytes.length > MAX_ZIP_SIZE) {
     throw new Error('ZIP 文件无效或超过 16 MiB');
@@ -94,8 +94,9 @@ export async function unzip(bytes, { signal } = {}) {
     const folded = name.toLowerCase();
     if (names.has(folded)) throw new Error('ZIP 包含重复或大小写冲突的路径');
     names.add(folded);
-    expanded += size;
-    if (expanded > MAX_EXPANDED_SIZE || size > MAX_EXPANDED_SIZE || directory && size !== 0) throw new Error('ZIP 解压内容超过上限');
+    const selected = !directory && include(name);
+    expanded += selected ? size : 0;
+    if (expanded > MAX_EXPANDED_SIZE || selected && size > MAX_EXPANDED_SIZE || directory && size !== 0) throw new Error('ZIP 解压内容超过上限');
     bound(local, 30, cdStart);
     if (v.getUint32(local, true) !== 0x04034b50 || v.getUint16(local + 6, true) !== flags ||
         v.getUint16(local + 8, true) !== method) throw new Error('ZIP 本地文件头与目录不一致');
@@ -124,6 +125,7 @@ export async function unzip(bytes, { signal } = {}) {
   const files = new Map();
   for (const entry of entries) {
     checkCancelled(signal);
+    if (entry.directory || !include(entry.name)) continue;
     const compressed = bytes.subarray(entry.start, entry.start + entry.compressed);
     const data = entry.method === 0 ? compressed.slice() : await inflate(compressed, entry.size, signal);
     if (data.length !== entry.size || crc32(data) !== entry.crc) throw new Error(`ZIP 文件校验失败：${entry.name}`);

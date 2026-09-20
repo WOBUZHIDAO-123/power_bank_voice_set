@@ -55,9 +55,42 @@ export function buildVoiceTable(entries, tag, imageCRC) {
   return bytes;
 }
 
-export async function compilePackage(zipBytes, expectedLanguage, { signal, onProgress = () => {} } = {}) {
+export async function compilePackage(zipBytes, expectedLanguage, { signal, onProgress = () => {}, audioOnly = false } = {}) {
   onProgress('解压语音包', 0);
-  const archive = await unzip(zipBytes, { signal });
+  const isAudio = name => /\.(mp3|wav)$/i.test(name) && !name.startsWith('__MACOSX/') &&
+    !name.split('/').some(part => part.startsWith('.'));
+  const archive = await unzip(zipBytes, { signal, include: audioOnly ? isAudio : undefined });
+  if (audioOnly) {
+    const rows = [...archive].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
+    if (!rows.length) throw new Error('ZIP 中没有 MP3 或 WAV 音频文件');
+    if (rows.length > 255) throw new Error('音频试烧最多支持 255 个文件');
+    const used = new Set();
+    const files = rows.map(([path, bytes]) => {
+      const prefix = /^(\d{3})(?:[-_.]|$)/.exec(path.split('/').at(-1));
+      const candidate = prefix ? Number(prefix[1]) : 0;
+      const id = candidate >= 1 && candidate <= 255 && !used.has(candidate) ? candidate : null;
+      if (id) used.add(id);
+      return { id, path, bytes, extension: path.split('.').at(-1).toLowerCase() };
+    });
+    for (const file of files) {
+      if (!file.bytes.length) throw new Error('音频文件为空：' + file.path);
+      if (!file.id) {
+        let id = 1; while (used.has(id)) id++;
+        file.id = id; used.add(id);
+      }
+    }
+    checkCancelled(signal);
+    onProgress('生成音频试烧镜像', 0);
+    const image = buildFatImage(files);
+    validateImage(image);
+    checkCancelled(signal);
+    const first = files[0];
+    return { image, table: new Uint8Array(), languageTag: expectedLanguage ? languageTag(expectedLanguage) : 'und',
+      fileCount: files.length, entryCount: 0, audioOnly: true,
+      audioFiles: files.map(({ id, path }) => ({ id, path })),
+      preview: first.bytes.length <= 4 * 1024 * 1024 ? first.bytes.slice() : new Uint8Array(),
+      previewType: first.extension === 'mp3' ? 'audio/mpeg' : 'audio/wav' };
+  }
   if (archive.has('table.bin') || archive.has('audio.img')) {
     if (archive.has('voice.json')) throw new Error('不能混用 table.bin 资源包与 voice.json 清单');
     const image = archive.get('audio.img'), table = archive.get('table.bin');

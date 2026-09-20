@@ -207,13 +207,17 @@ export class Burner {
     throw new Error('设备处理超时，请重新连接后完整烧录');
   }
 
-  async burn(bytes, tableBytes, selectedLanguage, { signal } = {}) {
+  async burnImage(bytes, options = {}) {
+    return this.burn(bytes, null, null, { ...options, imageOnly: true });
+  }
+
+  async burn(bytes, tableBytes, selectedLanguage, { signal, imageOnly = false } = {}) {
     if (this.running) throw new Error('正在烧录，请等待当前操作结束');
     this.running = true;
     this.signal = signal;
     this.touched = false;
     try {
-      return await this.burnResources(bytes, tableBytes, selectedLanguage);
+      return await this.burnResources(bytes, tableBytes, selectedLanguage, imageOnly);
     } catch (error) {
       if (signal?.aborted || error.name === 'AbortError') {
         let message = this.touched ? '已取消，原语音可能已被覆盖，需要重新完整烧录' : '已取消，尚未开始写入设备';
@@ -234,11 +238,11 @@ export class Burner {
     } finally { this.running = false; this.signal = undefined; }
   }
 
-  async burnResources(bytes, tableBytes, selectedLanguage) {
+  async burnResources(bytes, tableBytes, selectedLanguage, imageOnly = false) {
     this.onProgress('准备文件', 0);
     const info = await this.info();
     const crc = validateImage(bytes, info.capacity);
-    const table = validateTable(tableBytes, crc, selectedLanguage, info.tableMaxSize);
+    const table = imageOnly ? null : validateTable(tableBytes, crc, selectedLanguage, info.tableMaxSize);
     // Both resources are checked before any destructive command.
     const previous = await this.status();
     if (![STATE.IDLE, STATE.ABORT].includes(previous.state)) {
@@ -246,6 +250,7 @@ export class Burner {
       if ((await this.status()).state !== STATE.ABORT) throw new Error('设备旧会话未清理完成');
     }
     await this.transfer(bytes, crc, TARGET.IMAGE);
+    if (imageOnly) return true;
     try {
       // TABLE_START follows image SUCCESS directly, as specified by 1.3.0.
       await this.transfer(tableBytes, table.crc, TARGET.TABLE, crc);
