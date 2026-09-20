@@ -1,4 +1,4 @@
-import { languageTag } from './binary.js';
+﻿import { languageTag } from './binary.js';
 const HISTORY_KEY='voice-writer.last-success.v1';
 export function parseCatalog(data, base) {
   if (!Array.isArray(data)) throw new Error('语种清单必须是数组');
@@ -20,7 +20,7 @@ export function parseCatalog(data, base) {
   });
 }
 export async function loadCatalog(){const url=new URL('./languages.json',import.meta.url);const response=await fetch(url,{cache:'no-store'});if(!response.ok)throw new Error(`HTTP ${response.status}`);return parseCatalog(await response.json(),url);}
-export function readHistory(storage,catalog){try{if(!storage)throw new Error();const id=storage.getItem(HISTORY_KEY);if(!id)return {};const item=catalog.find(row=>row.id===id);if(item)return {item};storage.removeItem(HISTORY_KEY);return {stale:true};}catch{return {unavailable:true};}}
+export function readHistory(storage,catalog){try{if(!storage)throw new Error();const id=storage.getItem(HISTORY_KEY);if(!id)return {};const item=catalog.find(row=>row.id===id);if(item)return {item};if(id.startsWith('local:')){const tag=languageTag(id.slice(6));return {local:{name:tag,languageTag:tag}};}storage.removeItem(HISTORY_KEY);return {stale:true};}catch{return {unavailable:true};}}
 export function saveHistory(storage,id){try{if(!storage)return false;storage.setItem(HISTORY_KEY,id);return true;}catch{return false;}}
 export async function fetchBytes(url, { limit = 0x800000, label = '镜像', signal } = {}) {
   const controller = new AbortController();

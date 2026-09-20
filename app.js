@@ -1,4 +1,4 @@
-import { SerialLink, Burner } from './protocol.js';
+﻿import { SerialLink, Burner } from './protocol.js';
 import { loadCatalog, readHistory, saveHistory, fetchBytes } from './resources.js';
 import { preparePackage } from './package-client.js';
 import { MAX_ZIP_SIZE, checkCancelled } from './zip.js';
@@ -8,13 +8,14 @@ const $ = id => document.getElementById(id);
 const audio = new Audio();
 let catalog = [], link = null, burner = null, prepared = null, previewURL = null;
 let busy = false, connecting = false, playing = false, audioToken = 0, operation = null;
-let connectedBefore = false;
-const chosen = () => catalog.find(item => item.id === $('language').value);
+let connectedBefore = false, localItem = null;
+const chosen = () => localItem ?? catalog.find(item => item.id === $('language').value);
 
 function render() {
   const supported = window.isSecureContext && 'serial' in navigator;
   $('connect').disabled = busy || connecting || !supported;
   $('connect').textContent = connecting ? '正在连接…' : link && !link.closed ? '重新连接' : '连接设备';
+  $('local-package').disabled = busy || connecting;
   $('language').disabled = busy || connecting || !catalog.length;
   $('preview').disabled = busy || connecting || !prepared;
   $('preview').textContent = playing ? '停止试听' : '试听';
@@ -56,12 +57,7 @@ async function prepareSelected() {
     const bytes = await fetchBytes(item.package, { limit: MAX_ZIP_SIZE, label: '语音 ZIP', signal });
     const bundle = await preparePackage(bytes, item.languageTag, { signal, onProgress: progress });
     checkCancelled(signal);
-    previewURL = URL.createObjectURL(new Blob([bundle.preview], { type: bundle.previewType }));
-    prepared = { ...bundle, id: item.id };
-    $('audio-message').textContent = bundle.preview.length ? '' : '试听暂不可用，不影响烧录。';
-    $('resource').textContent = '语音包已检查：' + (bundle.fileCount === null ? '配套镜像，' : bundle.fileCount + ' 个音频，') +
-      bundle.entryCount + ' 条播放规则，镜像 ' + (bundle.image.length / 1024).toFixed(1) + ' KiB。';
-    progress('语音包已就绪，可以试听或烧录', 0);
+    showPrepared(bundle, item);
   } catch (error) {
     discardPrepared();
     if (signal.aborted || error.name === 'AbortError') {
@@ -72,12 +68,52 @@ async function prepareSelected() {
   } finally { busy = false; operation = null; render(); }
 }
 
+function showPrepared(bundle, item) {
+    previewURL = URL.createObjectURL(new Blob([bundle.preview], { type: bundle.previewType }));
+    prepared = { ...bundle, id: item.id };
+    $('audio-message').textContent = bundle.preview.length ? '' : '试听暂不可用，不影响烧录。';
+    $('resource').textContent = '语音包已检查：' + (bundle.fileCount === null ? '配套镜像，' : bundle.fileCount + ' 个音频，') +
+      bundle.entryCount + ' 条播放规则，镜像 ' + (bundle.image.length / 1024).toFixed(1) + ' KiB。';
+    progress('语音包已就绪，可以试听或烧录', 0);
+}
+
+$('local-package').addEventListener('change', async () => {
+  if (busy || connecting) return;
+  const file = $('local-package').files?.[0];
+  if (!file) return;
+  discardPrepared(); localItem = null; $('language').value = '';
+  $('local-package').value = ''; // Permit choosing the same file again after a failure.
+  $('audio-message').textContent = ''; $('resource').textContent = ''; result('');
+  busy = true; operation = new AbortController(); render();
+  const signal = operation.signal;
+  try {
+    if (!/\.zip$/i.test(file.name)) throw new Error('请选择 ZIP 格式的语音包');
+    if (!file.size || file.size > MAX_ZIP_SIZE) throw new Error('语音 ZIP 必须非空且不超过 16 MiB');
+    progress('读取本地语音包', 0);
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    checkCancelled(signal);
+    if (bytes.length !== file.size) throw new Error('本地文件读取不完整，请重新选择');
+    const bundle = await preparePackage(bytes, undefined, { signal, onProgress: progress });
+    checkCancelled(signal);
+    localItem = { id: 'local:' + bundle.languageTag, name: bundle.languageTag, languageTag: bundle.languageTag };
+    showPrepared(bundle, localItem);
+    $('resource').textContent = '本地文件：' + file.name + '；语种：' + bundle.languageTag + '。' + $('resource').textContent;
+  } catch (error) {
+    discardPrepared(); localItem = null;
+    if (signal.aborted || error.name === 'AbortError') {
+      progress('准备已取消', 0); result('已取消准备，尚未写入设备。');
+    } else {
+      progress('语音包准备失败', 0); result(error.message + '。设备未被修改，请重新选择 ZIP。', true);
+    }
+  } finally { busy = false; operation = null; render(); }
+});
+
 audio.addEventListener('ended', () => { playing = false; render(); });
 audio.addEventListener('error', () => {
   if (!audio.hasAttribute('src')) return;
   playing = false; $('audio-message').textContent = '试听暂不可用，不影响烧录。'; render();
 });
-$('language').addEventListener('change', prepareSelected);
+$('language').addEventListener('change', () => { if (busy || connecting) return; localItem = null; return prepareSelected(); });
 $('preview').addEventListener('click', async () => {
   if (playing) { stopAudio(); return; }
   if (!prepared || busy) return;
@@ -96,8 +132,8 @@ $('connect').addEventListener('click', async () => {
   if (busy || connecting) return;
   connecting = true; render(); result('');
   const diagnostics = [];
-  const report = message => { diagnostics.push(message); $('diagnostic').textContent = diagnostics.join(' ? '); };
-  report('????????????????');
+  const report = message => { diagnostics.push(message); $('diagnostic').textContent = diagnostics.join(' → '); };
+  report('浏览器允许串口访问，等待选择设备');
   try {
     const port = await navigator.serial.requestPort();
     if (link) { await link.close(); link = null; }
@@ -108,9 +144,9 @@ $('connect').addEventListener('click', async () => {
       if (busy) { operation?.abort(); result('设备连接已断开，请重新连接后完整烧录。', true); }
       render();
     };
-    report('????????????');
+    report('已选择设备，正在打开串口');
     await candidate.open();
-    report('?????');
+    report('串口已打开');
     burner = new Burner(candidate, { onProgress: progress });
     // Reconnect observes current transfer status before any cleanup or restart.
     await checkConnection(burner, { reconnect: connectedBefore, report });
@@ -118,9 +154,9 @@ $('connect').addEventListener('click', async () => {
     $('connection').textContent = '已连接';
     result('设备已连接，语音包准备好后可开始烧录。');
   } catch (error) {
-    if (error.name === 'NotFoundError') report('??????????????? USB ???????????????');
+    if (error.name === 'NotFoundError') report('未选择设备；如列表为空，请检查 USB 数据线、驱动及设备是否接在本机');
     else {
-      report('??????' + error.message);
+      report('检查未完成：' + error.message);
       if (link) await link.close();
       link = null; burner = null; $('connection').textContent = '未连接';
       result('连接失败：' + error.message, true);
@@ -147,7 +183,7 @@ window.addEventListener('beforeunload', event => {
 });
 async function init() {
   render();
-  if (!window.isSecureContext) $('support').textContent = '请通过 localhost 或 HTTPS 打开本页面。';
+  if (!window.isSecureContext) $('support').textContent = '此 HTTP 地址不能使用串口。请打开 HTTPS 网址，或在本机通过 localhost 运行。';
   else if (!('serial' in navigator)) $('support').textContent = '当前浏览器不支持设备连接，请使用 Windows 电脑版 Chrome。';
   else $('support').textContent = '请使用支持数据传输的 USB 线，在弹窗中选择设备。';
   try {
@@ -156,9 +192,10 @@ async function init() {
       const option = document.createElement('option'); option.value = item.id; option.textContent = item.name;
       $('language').append(option);
     }
-    if (!catalog.length) $('resource').textContent = '尚未配置语音 ZIP，请由维护人员添加语音包。';
+    if (!catalog.length) $('resource').textContent = '暂无在线语音包，可选择电脑上的语音 ZIP。';
     const history = readHistory(localStorageSafe(), catalog);
     if (history.item) { $('language').value = history.item.id; showHistory(history.item); await prepareSelected(); }
+    if (history.local) { showHistory(history.local); $('resource').textContent += ' 上次写入来自本地 ZIP，请重新选择文件。'; }
     if (history.stale) $('resource').textContent += ' 上次使用的语种已移除，请重新选择。';
     if (history.unavailable) $('storage').textContent = '浏览器记录不可用，烧录仍可正常进行。';
   } catch (error) {

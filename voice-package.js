@@ -1,4 +1,4 @@
-import { crc32, languageTag } from './binary.js';
+﻿import { crc32, languageTag } from './binary.js';
 import { unzip, packagePath, checkCancelled } from './zip.js';
 import { buildFatImage } from './fat-image.js';
 import { validateTable, readTableLanguage } from './voice-table.js';
@@ -68,7 +68,7 @@ export async function compilePackage(zipBytes, expectedLanguage, { signal, onPro
     checkCancelled(signal);
     onProgress('检查镜像和播放表', 0);
     const checksum = validateImage(image);
-    const metadata = validateTable(table, checksum, expectedLanguage);
+    const metadata = validateTable(table, checksum, expectedLanguage ?? readTableLanguage(table));
     // Preview failure must not prevent writing a valid image/table pair.
     let preview = archive.get('preview.mp3'), previewType = 'audio/mpeg';
     try {
@@ -89,7 +89,7 @@ export async function compilePackage(zipBytes, expectedLanguage, { signal, onPro
     throw new Error('voice.json 需包含版本 1、1～999 个音频和 206 条完整事件映射');
   }
   const tag = languageTag(manifest.languageTag);
-  if (tag !== languageTag(expectedLanguage)) throw new Error('ZIP 的语言标识与所选语种不一致');
+  if (tag !== languageTag(expectedLanguage ?? tag)) throw new Error('ZIP 的语言标识与所选语种不一致');
   const used = new Set(['voice.json']), ids = new Set();
   let audioSize = 0;
   const files = manifest.files.map(file => {
