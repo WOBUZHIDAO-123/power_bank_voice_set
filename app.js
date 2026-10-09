@@ -12,6 +12,8 @@ let connectedBefore = false, localItem = null;
 const chosen = () => localItem ?? catalog.find(item => item.id === $('language').value);
 
 function render() {
+  for (const id of ['custom-event', 'custom-file']) $(id).disabled = busy || connecting || !prepared?.editable;
+  $('custom-help').textContent = prepared?.editable ? '选择提示并上传录音，处理成功后可试听，再点击开始烧录。' : '请取消音频试烧，加载含 voice.json 和原始音频的完整 ZIP。现成镜像包暂不支持编辑。';
   const supported = window.isSecureContext && 'serial' in navigator;
   $('connect').disabled = busy || connecting || !supported;
   $('connect').textContent = connecting ? '正在连接…' : link && !link.closed ? '重新连接' : '连接设备';
@@ -34,7 +36,7 @@ function stopAudio() {
 function discardPrepared() {
   stopAudio();
   if (previewURL) URL.revokeObjectURL(previewURL);
-  previewURL = null; prepared = null; $('file-map').textContent = '';
+  previewURL = null; prepared = null; $('file-map').textContent = ''; $('custom-status').textContent = '';
 }
 function showHistory(item) {
   $('history').textContent = item ? '本浏览器上次成功写入：' + item.name + '（非设备读取）' : '暂无记录';
@@ -78,6 +80,7 @@ async function prepareSelected() {
 }
 
 function showPrepared(bundle, item) {
+    if (previewURL) URL.revokeObjectURL(previewURL);
     previewURL = URL.createObjectURL(new Blob([bundle.preview], { type: bundle.previewType }));
     prepared = { ...bundle, id: item.id };
     $('audio-message').textContent = bundle.preview.length ? '' : '试听暂不可用，不影响烧录。';
@@ -90,6 +93,30 @@ function showPrepared(bundle, item) {
     }
     progress(bundle.audioOnly ? '音频试烧已就绪（仅写镜像）' : '语音包已就绪，可以试听或烧录', 0);
 }
+
+$('custom-file').addEventListener('change', async () => {
+  if (busy || connecting || !prepared?.editable) return;
+  const file = $('custom-file').files?.[0];
+  if (!file) return;
+  $('custom-file').value = '';
+  const eventId = Number($('custom-event').value), item = chosen();
+  busy = true; operation = new AbortController(); stopAudio(); render();
+  const signal = operation.signal;
+  try {
+    if (!file.size || file.size > 4 * 1024 * 1024) throw new Error('录音必须非空且不超过 4 MiB');
+    progress('正在替换提示音', 0);
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    checkCancelled(signal);
+    const bundle = await preparePackage(bytes, prepared.languageTag, { signal, replacement: { bundle: prepared, eventId, filename: file.name } });
+    checkCancelled(signal);
+    showPrepared(bundle, item);
+    $('custom-status').textContent = '已自定义：' + bundle.customPrompts.map(id => ({256:'开始充电',257:'开始放电',258:'充满电',259:'低电量'})[id]).join('、');
+    result('提示音已替换，可试听最新录音。尚未写入设备；点击开始烧录将写入完整语音包。');
+  } catch (error) {
+    progress('保留原准备结果', 0);
+    result(signal.aborted ? '替换已取消，未写入设备。' : error.message + '。替换未生效，未写入设备。', !signal.aborted);
+  } finally { busy = false; operation = null; render(); }
+});
 
 $('audio-only').addEventListener('change', () => {
   if (busy || connecting) return;
@@ -199,7 +226,7 @@ $('start').addEventListener('click', async () => {
       return;
     }
     await burner.burn(prepared.image, prepared.table, item.languageTag, { signal: operation.signal });
-    progress('烧录成功', 100); result('本次已写入：' + item.name);
+    progress('烧录成功', 100); result('本次已写入：' + item.name + (prepared.customPrompts?.length ? '（含自定义提示音）' : ''));
     if (saveHistory(localStorageSafe(), item.id)) showHistory(item);
     else $('storage').textContent = '烧录已成功，但浏览器无法保存记录，无法记住本次结果。';
   } catch (error) {

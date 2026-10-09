@@ -162,5 +162,29 @@ export async function compilePackage(zipBytes, expectedLanguage, { signal, onPro
   const table = buildVoiceTable(entries, tag, crc32(image));
   checkCancelled(signal);
   return { image, table, languageTag: tag, fileCount: files.length, entryCount: entries.length,
+    editable: { files, entries },
     preview: preview.slice(), previewType: previewType === 'mp3' ? 'audio/mpeg' : 'audio/wav' };
+}
+
+export function replacePrompt(bundle, eventId, bytes, filename) {
+  if (!bundle.editable || bundle.audioOnly) throw new Error('请加载完整的 voice.json＋原始音频语音包');
+  if (![256, 257, 258, 259].includes(eventId)) throw new Error('仅支持四种固定提示');
+  if (!(bytes instanceof Uint8Array) || !bytes.length || bytes.length > 4 * 1024 * 1024) throw new Error('录音必须非空且不超过 4 MiB');
+  const extension = audioType(filename, bytes);
+  const { files, entries } = bundle.editable;
+  const target = entries.find(row => row.eventId === eventId && row.value === -1);
+  if (!target) throw new Error('基础包缺少所选提示');
+  const used = new Set(files.map(file => file.id));
+  let id = target.sequence.length === 1 && !entries.some(row => row !== target && row.sequence.includes(target.sequence[0])) ? target.sequence[0] : null;
+  if (id === null) for (let candidate = 1; candidate <= 255; candidate++) if (!used.has(candidate)) { id = candidate; break; }
+  if (id === null) throw new Error('音频编号已满，无法为此提示分配独立录音');
+  const nextFiles = files.filter(file => file.id !== id).concat({ id, bytes: bytes.slice(), extension }).sort((a, b) => a.id - b.id);
+  const nextEntries = entries.map(row => ({ ...row, sequence: row === target ? [id] : [...row.sequence] }));
+  const image = buildFatImage(nextFiles);
+  validateImage(image);
+  const table = buildVoiceTable(nextEntries, bundle.languageTag, crc32(image));
+  return { ...bundle, image, table, fileCount: nextFiles.length,
+    editable: { files: nextFiles, entries: nextEntries },
+    preview: bytes.slice(), previewType: extension === 'mp3' ? 'audio/mpeg' : 'audio/wav',
+    customPrompts: [...new Set([...(bundle.customPrompts ?? []), eventId])] };
 }
