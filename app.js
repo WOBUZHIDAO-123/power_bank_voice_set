@@ -155,13 +155,14 @@ function showPrepared(bundle, item) {
     prepared = { ...bundle, id: item.id };
     $('audio-message').textContent = bundle.preview.length ? '' : '试听暂不可用，不影响烧录。';
     $('resource').textContent = '语音包已检查：' + (bundle.fileCount === null ? '配套镜像，' : bundle.fileCount + ' 个音频，') +
-      bundle.entryCount + ' 条播放规则，镜像 ' + (bundle.image.length / 1024).toFixed(1) + ' KiB。';
+      bundle.entryCount + ' 条播放规则，镜像 ' + (bundle.image.length / 1024).toFixed(1) + ' KiB。' +
+      (bundle.partial ? ' 这是部分映射测试包，只能测试清单中已有的提示。' : '');
     $('file-map').textContent = bundle.audioOnly ? bundle.audioFiles.map(file => String(file.id).padStart(3, '0') + ' ← ' + file.path).join('\n') : '';
     if (bundle.audioOnly) {
       $('resource').textContent = '检测到 ' + bundle.fileCount + ' 个音频，已生成试烧镜像。不读取播放表或语种清单；所选语种仅作参考。';
       $('voice-ids').value = String(bundle.audioFiles[0].id);
     }
-    progress(bundle.audioOnly ? '音频试烧已就绪（仅写镜像）' : '语音包已就绪，可以试听或烧录', 0);
+    progress(bundle.audioOnly ? '音频试烧已就绪（仅写镜像）' : bundle.partial ? '部分映射测试包已就绪' : '语音包已就绪，可以试听或烧录', 0);
 }
 
 async function playListAudio(file, toggle = false) {
@@ -329,7 +330,7 @@ $('start').addEventListener('click', async () => {
       result('音频镜像试烧成功。未更新播放表，不代表完整语种切换；可用下方编号队列测试硬件发声。');
       return;
     }
-    await burner.burn(prepared.image, prepared.table, item.languageTag, { signal: operation.signal });
+    await burner.burn(prepared.image, prepared.table, item.languageTag, { signal: operation.signal, allowPartial: prepared.partial === true });
     progress('烧录成功', 100); result('本次已写入：' + item.name + ((prepared.customPrompts?.length || prepared.customAudio?.length) ? '（含自定义提示音）' : ''));
     if (saveHistory(localStorageSafe(), item.id)) showHistory(item);
     else $('storage').textContent = '烧录已成功，但浏览器无法保存记录，无法记住本次结果。';

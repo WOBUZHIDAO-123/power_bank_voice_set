@@ -14,7 +14,7 @@ export function readTableLanguage(bytes) {
   return decodeLanguage(zero < 0 ? tagBytes : tagBytes.subarray(0, zero));
 }
 
-export function validateTable(bytes, imageCRC, selectedLanguage, maxSize = 4096) {
+export function validateTable(bytes, imageCRC, selectedLanguage, maxSize = 4096, requireComplete = true) {
   if (!(bytes instanceof Uint8Array) || bytes.length < 48 || bytes.length > Math.min(4096, maxSize)) {
     throw new Error('播放表大小必须为 48～4096 字节，且不超过设备上限');
   }
@@ -59,7 +59,8 @@ export function validateTable(bytes, imageCRC, selectedLanguage, maxSize = 4096)
     }
     keys.add(key);
   }
-  // Both numeric events need a mapping for every integer battery percentage.
+  if (requireComplete) {
+    // Both numeric events need a mapping for every integer battery percentage.
   for (const event of [1, 2]) {
     for (let value = 0; value <= 100; value++) {
       if (!keys.has(`${event}:${value}`)) throw new Error('播放表必须覆盖两类电量提示的 0～100');
@@ -67,6 +68,7 @@ export function validateTable(bytes, imageCRC, selectedLanguage, maxSize = 4096)
   }
   for (const event of [0x100, 0x101, 0x102, 0x103]) {
     if (!keys.has(`${event}:-1`)) throw new Error('播放表缺少固定提示条目');
+  }
   }
   return { crc: crc32(bytes), imageCRC, languageTag: tag, entryCount, size: bytes.length, format, maxSequenceLength };
 }

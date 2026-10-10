@@ -216,13 +216,13 @@ export class Burner {
     return this.burn(bytes, null, null, { ...options, imageOnly: true });
   }
 
-  async burn(bytes, tableBytes, selectedLanguage, { signal, imageOnly = false } = {}) {
+  async burn(bytes, tableBytes, selectedLanguage, { signal, imageOnly = false, allowPartial = false } = {}) {
     if (this.running) throw new Error('正在烧录，请等待当前操作结束');
     this.running = true;
     this.signal = signal;
     this.touched = false;
     try {
-      return await this.burnResources(bytes, tableBytes, selectedLanguage, imageOnly);
+      return await this.burnResources(bytes, tableBytes, selectedLanguage, imageOnly, allowPartial);
     } catch (error) {
       if (signal?.aborted || error.name === 'AbortError') {
         let message = this.touched ? '已取消，原语音可能已被覆盖，需要重新完整烧录' : '已取消，尚未开始写入设备';
@@ -243,11 +243,11 @@ export class Burner {
     } finally { this.running = false; this.signal = undefined; }
   }
 
-  async burnResources(bytes, tableBytes, selectedLanguage, imageOnly = false) {
+  async burnResources(bytes, tableBytes, selectedLanguage, imageOnly = false, allowPartial = false) {
     this.onProgress('准备文件', 0);
     const info = await this.info();
     const crc = validateImage(bytes, info.capacity);
-    const table = imageOnly ? null : validateTable(tableBytes, crc, selectedLanguage, info.tableMaxSize);
+    const table = imageOnly ? null : validateTable(tableBytes, crc, selectedLanguage, info.tableMaxSize, !allowPartial);
     // Both resources are checked before any destructive command.
     const previous = await this.status();
     if (![STATE.IDLE, STATE.ABORT].includes(previous.state)) {

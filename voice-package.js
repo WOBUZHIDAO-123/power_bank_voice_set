@@ -51,7 +51,7 @@ export function buildVoiceTable(entries, tag, imageCRC) {
   });
   pool.forEach((id, index) => view.setUint16(poolOffset + index * 2, id, true));
   view.setUint32(12, crc32(bytes.subarray(48)), true);
-  validateTable(bytes, imageCRC, tag);
+  validateTable(bytes, imageCRC, tag, 4096, false);
   return bytes;
 }
 
@@ -127,8 +127,8 @@ export async function compilePackage(zipBytes, expectedLanguage, { signal, onPro
     };
   }
   if (!manifest || manifest.formatVersion !== 1 || !Array.isArray(manifest.files) ||
-      !manifest.files.length || manifest.files.length > 255 || !Array.isArray(manifest.entries) || manifest.entries.length !== 206) {
-    throw new Error('voice.json 需包含版本 1、1～255 个音频和 206 条完整事件映射');
+      !manifest.files.length || manifest.files.length > 255 || !Array.isArray(manifest.entries) || !manifest.entries.length || (!manifest.modern && manifest.entries.length !== 206)) {
+    throw new Error('voice.json 需包含版本 1、1～255 个音频和至少 1 条有效事件映射');
   }
   const tag = languageTag(manifest.languageTag);
   if (tag !== languageTag(expectedLanguage ?? tag)) throw new Error('ZIP 的语言标识与所选语种不一致');
@@ -164,7 +164,7 @@ export async function compilePackage(zipBytes, expectedLanguage, { signal, onPro
     seen.add(key);
     return { eventId, value, sequence: row.sequence };
   }).sort((a, b) => a.eventId - b.eventId || a.value - b.value);
-  // Fixed event set + 206 distinct valid keys means both 0..100 ranges and four prompts are covered.
+  // Test packages may intentionally contain only the events being verified.
   const previewPath = packagePath(manifest.preview ?? manifest.files[0].path);
   const preview = archive.get(previewPath);
   if (!preview || !preview.length || preview.length > 4 * 1024 * 1024) throw new Error('试听文件缺失、为空或超过 4 MiB');
@@ -179,6 +179,7 @@ export async function compilePackage(zipBytes, expectedLanguage, { signal, onPro
   const table = buildVoiceTable(entries, tag, crc32(image));
   checkCancelled(signal);
   return { image, table, languageTag: tag, fileCount: files.length, entryCount: entries.length,
+    partial: manifest.modern && entries.length !== 206,
     editable: { files, entries, modern: manifest.modern },
     preview: preview.slice(), previewType: previewType === 'mp3' ? 'audio/mpeg' : 'audio/wav' };
 }
