@@ -13,7 +13,7 @@ const chosen = () => localItem ?? catalog.find(item => item.id === $('language')
 
 function render() {
   for (const id of ['custom-event', 'custom-file']) $(id).disabled = busy || connecting || !prepared?.editable;
-  $('custom-help').textContent = prepared?.editable ? '选择提示并上传录音，处理成功后可试听，再点击开始烧录。' : '请取消音频试烧，加载含 voice.json 和原始音频的完整 ZIP。现成镜像包暂不支持编辑。';
+  $('custom-help').textContent = prepared?.editable ? '选择提示并上传录音，处理成功后可试听，再点击开始烧录。' : '请加载含 voice.json 和原始音频的完整 ZIP。现成镜像包暂不支持编辑。';
   const supported = window.isSecureContext && 'serial' in navigator;
   $('connect').disabled = busy || connecting || !supported;
   $('connect').textContent = connecting ? '正在连接…' : link && !link.closed ? '重新连接' : '连接设备';
