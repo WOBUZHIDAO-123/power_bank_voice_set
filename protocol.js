@@ -4,8 +4,8 @@ import { checkCancelled } from './zip.js';
 export { crc32 } from './binary.js';
 export const MAX_IMAGE_SIZE = 0x800000;
 export const TARGET = { NONE: 0, IMAGE: 1, TABLE: 2 };
-export const CMD={INFO:1,START:2,STATUS:3,DATA:4,FINISH:5,ABORT:6,TABLE_START:7,TABLE_DATA:8,TABLE_FINISH:9,TABLE_INFO:10,VOICE_PLAY_EVENT:11,VOICE_QUEUE:12,VOICE_CONTROL:13};
-export const TYPE={ACK:128,NACK:129,INFO:130,STATUS:131,TABLE_INFO:132};
+export const CMD={INFO:1,START:2,STATUS:3,DATA:4,FINISH:5,ABORT:6,TABLE_START:7,TABLE_DATA:8,TABLE_FINISH:9,TABLE_INFO:10,VOICE_PLAY_EVENT:11,VOICE_QUEUE:12,VOICE_CONTROL:13,POWER_INFO:14,UI_TEST:15,UI_EVENT:16,I2C_SCAN:17,POWER_LOG:18,VOICE_STATUS:19,VOICE_XFER:20,VOICE_FLASH_PROBE:21,BRAILLE_TIMING:22};
+export const TYPE={ACK:128,NACK:129,INFO:130,STATUS:131,TABLE_INFO:132,POWER_INFO:133,I2C_SCAN:134,POWER_LOG:135,VOICE_STATUS:136,VOICE_XFER:137,VOICE_FLASH_PROBE:138,BRAILLE_INFO:139};
 export const STATE={IDLE:0,ERASING:1,READY:2,WRITING:3,VERIFYING:4,SUCCESS:5,ERROR:6,ABORT:7};
 const errors=['无错误','协议版本不匹配','通信长度错误','通信校验失败','设备不支持此命令','设备状态不允许此操作','镜像不符合要求','数据块顺序错误','硬件语音存储未就绪','存储清理失败','存储写入失败','写入内容检查失败','设备接收溢出','播放表格式或内容不合法','硬件播放表存储未就绪','播放表准备或写入失败','播放表检查或提交失败','设备尚无有效播放表','播放表中没有此事件或数值','硬件播放串口发送失败','播放队列或音频编号无效（1～255）'];
 export class DeviceError extends Error{constructor(code,expected){super(errors[code]??`设备错误 ${code}`);this.code=code;this.expected=expected;}}
@@ -16,15 +16,20 @@ export class Decoder{
  while(this.buffer.length>=2){const b=this.buffer;if(b[0]!==85||b[1]!==170){this.buffer=b.slice(1);continue;}if(b.length<11)break;const v=new DataView(b.buffer,b.byteOffset,b.byteLength),len=v.getUint16(9,true);if(b[2]!==1||b[4]!==0||len>1024){this.buffer=b.slice(1);continue;}if(b.length<len+15)break;if(v.getUint32(11+len,true)!==crc32(b.subarray(2,11+len))){this.buffer=b.slice(1);continue;}out.push({type:b[3],seq:v.getUint32(5,true),payload:b.slice(11,11+len)});this.buffer=b.slice(15+len);}
  return out;}
 }
-export function parseResponse(f){const lengths={[TYPE.ACK]:9,[TYPE.NACK]:5,[TYPE.INFO]:16,[TYPE.STATUS]:16,[TYPE.TABLE_INFO]:36};if(f.payload.length!==lengths[f.type])throw new Error('设备响应长度不符合协议');const v=new DataView(f.payload.buffer,f.payload.byteOffset,f.payload.byteLength);
+export function parseResponse(f){const lengths={[TYPE.ACK]:9,[TYPE.NACK]:5,[TYPE.INFO]:16,[TYPE.STATUS]:16,[TYPE.TABLE_INFO]:36,[TYPE.POWER_INFO]:20,[TYPE.VOICE_STATUS]:4,[TYPE.VOICE_FLASH_PROBE]:20,[TYPE.BRAILLE_INFO]:8};const expected=lengths[f.type];if(f.type===TYPE.VOICE_XFER?(f.payload.length<1||f.payload.length>17):f.payload.length!==expected)throw new Error('设备响应长度不符合协议');const v=new DataView(f.payload.buffer,f.payload.byteOffset,f.payload.byteLength);
  if(f.type===TYPE.NACK)throw new DeviceError(v.getUint8(0),v.getUint32(1,true));
  if(f.type===TYPE.ACK){if(v.getUint8(0)>2)throw new Error('设备确认对象无效');return {target:v.getUint8(0),expected:v.getUint32(1,true),completed:v.getUint32(5,true)};}
  if(f.type===TYPE.INFO)return {version:v.getUint8(0),state:v.getUint8(1),chunk:v.getUint16(2,true),capacity:v.getUint32(4,true),addressBytes:v.getUint8(8),capabilities:v.getUint8(9),tableMaxSize:v.getUint16(10,true),firmware:v.getUint32(12,true)};
  if(f.type===TYPE.TABLE_INFO){const length=v.getUint8(2);if(length>16||v.getUint8(0)>1||v.getUint16(18,true)!==0)throw new Error('播放表摘要格式无效');return {valid:v.getUint8(0),format:v.getUint8(1),maxSequenceLength:v.getUint8(3),size:v.getUint32(4,true),crc:v.getUint32(8,true),imageCRC:v.getUint32(12,true),entryCount:v.getUint16(16,true),languageTag:length?decodeLanguage(f.payload.subarray(20,20+length)):''};}
+ if(f.type===TYPE.POWER_INFO)return {valid:v.getUint8(0),driverState:v.getUint8(1),soc:v.getUint8(2),sysState3:v.getUint8(3),sysState4:v.getUint8(4),chgState2:v.getUint8(5),mosState:v.getUint8(6),vbatLow:v.getUint8(7),flags:v.getUint8(8),intHigh:v.getUint8(9),i2cAddress:v.getUint8(10),halStatus:v.getUint8(11),sysState2:v.getUint8(12),ilowState:v.getUint8(13),tsLoopState:v.getUint8(14),statusSrc0:v.getUint8(16),statusSrc1:v.getUint8(17),lowcurState:v.getUint8(18)};
+ if(f.type===TYPE.VOICE_STATUS)return {busy:v.getUint8(0),muxTarget:v.getUint8(1),voiceRail:v.getUint8(2)};
+ if(f.type===TYPE.VOICE_XFER)return {result:v.getUint8(0),bytes:f.payload.slice(1)};
+ if(f.type===TYPE.VOICE_FLASH_PROBE)return {ok:v.getUint8(0),jedec:f.payload.slice(1,4),status:v.getUint8(4),voiceRail:v.getUint8(5),muxTarget:v.getUint8(6),busy:v.getUint8(7),sector0:f.payload.slice(8,16),dataBridge:v.getUint8(16),id90Manufacturer:v.getUint8(17),id90Device:v.getUint8(18),idAbDevice:v.getUint8(19)};
+ if(f.type===TYPE.BRAILLE_INFO)return {settleMs:v.getUint16(0,true),pulseMs:v.getUint16(2,true),flags:v.getUint8(4),invertMask:v.getUint8(5)};
  if(v.getUint8(0)>7||v.getUint8(2)>2||v.getUint8(3)!==0)throw new Error('设备状态响应无效');
  return {state:v.getUint8(0),error:v.getUint8(1),target:v.getUint8(2),expected:v.getUint32(4,true),completed:v.getUint32(8,true),size:v.getUint32(12,true)};
 }
-export function validateInfo(info){if(info.version!==1||info.chunk!==1024||info.addressBytes!==3||info.capacity!==MAX_IMAGE_SIZE||info.firmware!==0x10300||info.state>7)throw new Error('设备协议或容量不兼容，需要 1.3.0、8 MiB 设备');const names=['音频镜像更新','可变镜像长度','播放表更新','播放表摘要查询'];const missing=names.filter((name,bit)=>!(info.capabilities&(1<<bit)));if(missing.length)throw new Error(`设备缺少必要功能：${missing.join('、')}`);if(!Number.isInteger(info.tableMaxSize)||info.tableMaxSize<48||info.tableMaxSize>4096)throw new Error('设备播放表容量无效');return info;}
+export function validateInfo(info){if(info.version!==1||info.chunk!==1024||info.addressBytes!==3||info.capacity!==MAX_IMAGE_SIZE||info.firmware!==0x10401||info.state>7)throw new Error('设备协议或容量不兼容，需要 1.4.1、8 MiB 设备');const names=['音频镜像更新','可变镜像长度','播放表更新','播放表摘要查询'];const missing=names.filter((name,bit)=>!(info.capabilities&(1<<bit)));if(missing.length)throw new Error(`设备缺少必要功能：${missing.join('、')}`);if(!Number.isInteger(info.tableMaxSize)||info.tableMaxSize<48||info.tableMaxSize>4096)throw new Error('设备播放表容量无效');return info;}
 export function validateImage(bytes,capacity=MAX_IMAGE_SIZE){const n=bytes.length;if(n<512||n>Math.min(capacity,MAX_IMAGE_SIZE)||n%512)throw new Error('镜像大小必须为 512 字节的整数倍，且不超过 8 MiB 和设备容量');const v=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);const sector=v.getUint16(11,true),cluster=v.getUint8(13),reserved=v.getUint16(14,true),fats=v.getUint8(16),roots=v.getUint16(17,true),small=v.getUint16(19,true),large=v.getUint32(32,true),fatSize=v.getUint16(22,true);const total=small||large;
  if(bytes[510]!==85||bytes[511]!==170||![512,1024,2048,4096].includes(sector)||!cluster||(cluster&(cluster-1))||cluster>128||!reserved||!fats||!roots||!fatSize||(small&&large)||total*sector!==n)throw new Error('镜像必须是完整 FAT12/FAT16 卷，卷大小必须与文件一致');const dataSectors=total-reserved-fats*fatSize-Math.ceil(roots*32/sector);const clusters=Math.floor(dataSectors/cluster);if(clusters<1||clusters>=65525||fatSize*sector<Math.ceil((clusters+2)*(clusters<4085?1.5:2)))throw new Error('镜像 FAT 布局无效或不是 FAT12/FAT16');return crc32(bytes);}
 export class SerialLink {
@@ -85,7 +90,7 @@ export class SerialLink {
         });
         return parseResponse(reply);
       } catch (error) {
-        // 1.3.0 only guarantees DATA replay. Observe state instead of restarting a task.
+        // 1.4.1 only guarantees DATA replay. Observe state instead of restarting a task.
         if (error.timeout && [CMD.VOICE_PLAY_EVENT, CMD.VOICE_QUEUE, CMD.VOICE_CONTROL].includes(type)) {
           error.message = '播放命令响应超时，设备可能已接收；未自动重发，请确认设备状态';
           throw error;
@@ -176,7 +181,7 @@ export class Burner {
   }
 
   controlVoice(action) {
-    if (![0, 1, 2].includes(action)) throw new Error('播放控制动作无效');
+    if (![0, 1, 2, 3, 4, 5].includes(action)) throw new Error('播放控制动作无效');
     return this.voiceCommand(CMD.VOICE_CONTROL, new Uint8Array([action]));
   }
 
@@ -252,7 +257,7 @@ export class Burner {
     await this.transfer(bytes, crc, TARGET.IMAGE);
     if (imageOnly) return true;
     try {
-      // TABLE_START follows image SUCCESS directly, as specified by 1.3.0.
+      // TABLE_START follows image SUCCESS directly, as specified by 1.4.1.
       await this.transfer(tableBytes, table.crc, TARGET.TABLE, crc);
     } catch (error) {
       if (error.name === 'AbortError' || this.signal?.aborted) throw error;
