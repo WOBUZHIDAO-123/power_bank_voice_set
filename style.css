@@ -24,3 +24,6 @@
   .voice-item{flex-wrap:wrap}
   .voice-row-actions{width:100%;justify-content:flex-end}
 }
+
+/* Reserve the recording-progress slot so the source progress never expands into it. */
+.clip-progress[hidden]{display:block;visibility:hidden;pointer-events:none}
