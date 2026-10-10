@@ -9,3 +9,18 @@
 .voice-info{flex:1}.voice-row-actions{display:flex;gap:8px;align-items:center;margin-left:auto}.voice-row-actions button{padding:9px 10px;font-size:12px;white-space:nowrap}.row-record{color:#ad4242;border-color:#eccaca}.row-record.recording{background:#fff0f0;color:#b12c2c}.row-upload{position:relative;color:#287b9e;border:1px solid #bfdeeb;border-radius:9px;padding:9px 10px;margin:0;font-size:12px;white-space:nowrap;overflow:hidden;cursor:pointer}.row-upload input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer}.row-upload:has(input:disabled){opacity:.5;cursor:not-allowed}.clip-progress{width:116px;text-align:left;color:#805193;border-color:#d7c5df}.clip-progress progress{display:block;margin-top:4px;height:5px;accent-color:#9461a5}.clip-progress[hidden]{display:none}.row-record-note,#custom-status{margin:12px 16px;font-size:13px;line-height:1.6}.voice-name{font-size:13px}@media(max-width:620px){.voice-item{flex-wrap:wrap}.voice-row-actions{width:100%;justify-content:flex-end}.voice-name{font-size:14px}}
 
 .voice-row-actions>*{width:116px;height:54px;flex:0 0 116px}.row-upload{display:flex;align-items:center;justify-content:center}.source-progress{width:100%;height:34px;padding:4px 7px;font-size:11px;text-align:left;color:#397b69;border-color:#cfe0d6}.source-progress progress{display:block;margin-top:4px;height:4px;accent-color:#397b69}@media(max-width:620px){.voice-row-actions>*{width:96px;flex-basis:96px}}
+
+/* Wider desktop layout keeps source and recording progress controls on one row. */
+@media(min-width:901px){
+  main{max-width:1080px}
+  .voice-list{max-height:480px}
+  .voice-item{display:grid;grid-template-columns:auto auto minmax(260px,1fr) auto;gap:14px;padding:14px 16px}
+  .voice-info{width:auto;min-width:260px}
+  .voice-row-actions{margin-left:0}
+  .voice-row-actions>*{width:132px;flex-basis:132px}
+}
+@media(min-width:621px) and (max-width:900px){
+  main{max-width:820px}
+  .voice-item{flex-wrap:wrap}
+  .voice-row-actions{width:100%;justify-content:flex-end}
+}
