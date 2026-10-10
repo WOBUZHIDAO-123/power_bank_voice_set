@@ -1,10 +1,10 @@
-import { compilePackage, replacePrompt } from './voice-package.js';
+import { compilePackage, replacePrompt, replaceAudio } from './voice-package.js';
 import { checkCancelled } from './zip.js';
 
 export function preparePackage(bytes, languageTag, { signal, onProgress = () => {}, audioOnly = false, replacement } = {}) {
   checkCancelled(signal);
   // Worker keeps the browser's cancel button responsive during FAT/CRC generation.
-  if (typeof Worker === 'undefined') return replacement ? Promise.resolve().then(() => { checkCancelled(signal); return replacePrompt(replacement.bundle, replacement.eventId, bytes, replacement.filename); }) : compilePackage(bytes, languageTag, { signal, onProgress, audioOnly });
+  if (typeof Worker === 'undefined') return replacement ? Promise.resolve().then(() => { checkCancelled(signal); return replacement.fileId !== undefined ? replaceAudio(replacement.bundle, replacement.fileId, bytes, replacement.filename) : replacePrompt(replacement.bundle, replacement.eventId, bytes, replacement.filename); }) : compilePackage(bytes, languageTag, { signal, onProgress, audioOnly });
   return new Promise((resolve, reject) => {
     const worker = new Worker(new URL('./package-worker.js', import.meta.url), { type: 'module' });
     let settled = false;

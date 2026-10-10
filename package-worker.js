@@ -1,8 +1,8 @@
-import { compilePackage, replacePrompt } from './voice-package.js';
+import { compilePackage, replacePrompt, replaceAudio } from './voice-package.js';
 
 self.onmessage = async ({ data }) => {
   try {
-    const result = data.action === 'replace' ? replacePrompt(data.bundle, data.eventId, data.bytes, data.filename) : await compilePackage(data.bytes, data.languageTag, {
+    const result = data.action === 'replace' ? (data.fileId !== undefined ? replaceAudio(data.bundle, data.fileId, data.bytes, data.filename) : replacePrompt(data.bundle, data.eventId, data.bytes, data.filename)) : await compilePackage(data.bytes, data.languageTag, {
       audioOnly: data.audioOnly,
       onProgress: (stage, value) => self.postMessage({ progress: { stage, value } })
     });

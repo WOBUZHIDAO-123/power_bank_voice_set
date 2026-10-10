@@ -130,7 +130,7 @@ export async function compilePackage(zipBytes, expectedLanguage, { signal, onPro
     if (audioSize > 0x800000) throw new Error('音频总大小超过 8 MiB');
     const extension = audioType(path, bytes);
     ids.add(file.id); used.add(path);
-    return { id: file.id, bytes, extension };
+    return { id: file.id, path, bytes, extension };
   });
   const seen = new Set();
   const entries = manifest.entries.map(row => {
@@ -187,4 +187,18 @@ export function replacePrompt(bundle, eventId, bytes, filename) {
     editable: { files: nextFiles, entries: nextEntries },
     preview: bytes.slice(), previewType: extension === 'mp3' ? 'audio/mpeg' : 'audio/wav',
     customPrompts: [...new Set([...(bundle.customPrompts ?? []), eventId])] };
+}
+
+export function replaceAudio(bundle, fileId, bytes, filename) {
+  if (!bundle.editable || bundle.audioOnly) throw new Error('请加载 voice.json＋原始音频完整包');
+  if (!Number.isInteger(fileId) || !bundle.editable.files.some(file => file.id === fileId)) throw new Error('请选择包内有效音频');
+  if (!(bytes instanceof Uint8Array) || !bytes.length || bytes.length > 4 * 1024 * 1024) throw new Error('录音必须非空且不超过 4 MiB');
+  const extension = audioType(filename, bytes);
+  const files = bundle.editable.files.map(file => file.id === fileId ? { ...file, bytes: bytes.slice(), extension, replacementName: filename } : file);
+  const image = buildFatImage(files);
+  validateImage(image);
+  const table = buildVoiceTable(bundle.editable.entries, bundle.languageTag, crc32(image));
+  return { ...bundle, image, table, editable: { files, entries: bundle.editable.entries },
+    preview: bytes.slice(), previewType: extension === 'mp3' ? 'audio/mpeg' : 'audio/wav',
+    customAudio: [...new Set([...(bundle.customAudio ?? []), fileId])] };
 }

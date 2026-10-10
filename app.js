@@ -9,11 +9,43 @@ const audio = new Audio();
 let catalog = [], link = null, burner = null, prepared = null, previewURL = null;
 let busy = false, connecting = false, playing = false, audioToken = 0, operation = null;
 let connectedBefore = false, localItem = null;
+const SHOW_AUDIO_STYLE_PREVIEW = true;
+let selectedAudioId = null, listSource = null;
+const demoFiles = ['开始充电', '开始放电', '充满电', '低电量', '当前剩余电量', '正在充电', '百分之', '零', '一', '二', '三', '四'].map((name, i) => ({ id: i + 1, path: 'audio/' + String(i + 1).padStart(3, '0') + '-' + name + '.mp3' }));
+function renderAudioList() {
+  const files = prepared?.editable?.files;
+  const source = files ?? demoFiles;
+  $('custom-panel').hidden = !files && !SHOW_AUDIO_STYLE_PREVIEW;
+  $('custom-count').textContent = source.length + ' 条' + (files ? '' : ' · 样式预览');
+  $('custom-help').textContent = files ? '选择任意音频，可试听并上传替换。列表来自当前语音包。' : prepared ? '此包暂不支持编辑。下方仅展示样式示例，请使用 voice.json＋原始音频完整包。' : '当前是示例列表，供查看样式；加载语音包后会显示真实音频。';
+  if (!source.some(file => file.id === selectedAudioId)) selectedAudioId = source[0]?.id ?? null;
+  if (source !== listSource) {
+    listSource = source;
+    $('custom-list').replaceChildren();
+    for (const file of source) {
+      const row = document.createElement('label'); row.className = 'voice-item';
+      const radio = document.createElement('input'); radio.type = 'radio'; radio.name = 'custom-audio'; radio.value = String(file.id);
+      radio.addEventListener('change', () => { if (busy || connecting) return; stopAudio(); selectedAudioId = file.id; render(); });
+      const number = document.createElement('span'); number.className = 'voice-number'; number.textContent = String(file.id).padStart(3, '0');
+      const info = document.createElement('span'); info.className = 'voice-info';
+      const name = document.createElement('span'); name.className = 'voice-name'; name.textContent = file.path?.split('/').at(-1) ?? '音频 ' + file.id;
+      const meta = document.createElement('span'); meta.className = 'voice-meta'; meta.textContent = file.replacementName ? '已替换 · ' + file.replacementName : file.bytes ? (file.bytes.length / 1024).toFixed(1) + ' KiB · ' + file.extension.toUpperCase() : '示例音频';
+      info.append(name, meta); row.append(radio, number, info); $('custom-list').append(row);
+    }
+  }
+  for (const row of $('custom-list').children) {
+    const radio = row.children[0]; radio.checked = Number(radio.value) === selectedAudioId; radio.disabled = busy || connecting;
+    row.classList.toggle('selected', radio.checked);
+  }
+  const selected = source.find(file => file.id === selectedAudioId);
+  $('custom-selected').textContent = selected ? '已选择：' + (selected.path?.split('/').at(-1) ?? selected.id) : '请选择一条音频';
+  $('custom-file').disabled = busy || connecting || !files || !selected;
+  $('custom-preview').disabled = busy || connecting || !files || !selected;
+}
 const chosen = () => localItem ?? catalog.find(item => item.id === $('language').value);
 
 function render() {
-  for (const id of ['custom-event', 'custom-file']) $(id).disabled = busy || connecting || !prepared?.editable;
-  $('custom-help').textContent = prepared?.editable ? '选择提示并上传录音，处理成功后可试听，再点击开始烧录。' : '请加载含 voice.json 和原始音频的完整 ZIP。现成镜像包暂不支持编辑。';
+  renderAudioList();
   const supported = window.isSecureContext && 'serial' in navigator;
   $('connect').disabled = busy || connecting || !supported;
   $('connect').textContent = connecting ? '正在连接…' : link && !link.closed ? '重新连接' : '连接设备';
@@ -36,7 +68,7 @@ function stopAudio() {
 function discardPrepared() {
   stopAudio();
   if (previewURL) URL.revokeObjectURL(previewURL);
-  previewURL = null; prepared = null; $('file-map').textContent = ''; $('custom-status').textContent = '';
+  previewURL = null; prepared = null; selectedAudioId = null; $('file-map').textContent = ''; $('custom-status').textContent = '';
 }
 function showHistory(item) {
   $('history').textContent = item ? '本浏览器上次成功写入：' + item.name + '（非设备读取）' : '暂无记录';
@@ -94,12 +126,23 @@ function showPrepared(bundle, item) {
     progress(bundle.audioOnly ? '音频试烧已就绪（仅写镜像）' : '语音包已就绪，可以试听或烧录', 0);
 }
 
+$('custom-preview').addEventListener('click', async () => {
+  if (busy || connecting) return;
+  const file = prepared?.editable?.files.find(row => row.id === selectedAudioId);
+  if (!file) return;
+  stopAudio(); const token = audioToken;
+  if (previewURL) URL.revokeObjectURL(previewURL);
+  previewURL = URL.createObjectURL(new Blob([file.bytes], { type: file.extension === 'mp3' ? 'audio/mpeg' : 'audio/wav' }));
+  audio.src = previewURL; playing = true; render();
+  try { await audio.play(); } catch { if (token === audioToken) { playing = false; $('audio-message').textContent = '此音频无法在浏览器试听。'; render(); } }
+});
+
 $('custom-file').addEventListener('change', async () => {
   if (busy || connecting || !prepared?.editable) return;
   const file = $('custom-file').files?.[0];
   if (!file) return;
   $('custom-file').value = '';
-  const eventId = Number($('custom-event').value), item = chosen();
+  const fileId = selectedAudioId, item = chosen();
   busy = true; operation = new AbortController(); stopAudio(); render();
   const signal = operation.signal;
   try {
@@ -107,10 +150,10 @@ $('custom-file').addEventListener('change', async () => {
     progress('正在替换提示音', 0);
     const bytes = new Uint8Array(await file.arrayBuffer());
     checkCancelled(signal);
-    const bundle = await preparePackage(bytes, prepared.languageTag, { signal, replacement: { bundle: prepared, eventId, filename: file.name } });
+    const bundle = await preparePackage(bytes, prepared.languageTag, { signal, replacement: { bundle: prepared, fileId, filename: file.name } });
     checkCancelled(signal);
     showPrepared(bundle, item);
-    $('custom-status').textContent = '已自定义：' + bundle.customPrompts.map(id => ({256:'开始充电',257:'开始放电',258:'充满电',259:'低电量'})[id]).join('、');
+    $('custom-status').textContent = '已替换音频：' + bundle.customAudio.map(id => String(id).padStart(3, '0')).join('、');
     result('提示音已替换，可试听最新录音。尚未写入设备；点击开始烧录将写入完整语音包。');
   } catch (error) {
     progress('保留原准备结果', 0);
@@ -169,6 +212,8 @@ $('preview').addEventListener('click', async () => {
   if (!prepared || busy) return;
   if (!prepared.preview.length) { $('audio-message').textContent = '试听暂不可用，不影响烧录。'; return; }
   stopAudio(); const token = audioToken;
+  if (previewURL) URL.revokeObjectURL(previewURL);
+  previewURL = URL.createObjectURL(new Blob([prepared.preview], { type: prepared.previewType }));
   audio.src = previewURL; $('audio-message').textContent = ''; playing = true; render();
   try { await audio.play(); }
   catch { if (token === audioToken) { playing = false; $('audio-message').textContent = '试听暂不可用，不影响烧录。'; render(); } }
@@ -226,7 +271,7 @@ $('start').addEventListener('click', async () => {
       return;
     }
     await burner.burn(prepared.image, prepared.table, item.languageTag, { signal: operation.signal });
-    progress('烧录成功', 100); result('本次已写入：' + item.name + (prepared.customPrompts?.length ? '（含自定义提示音）' : ''));
+    progress('烧录成功', 100); result('本次已写入：' + item.name + ((prepared.customPrompts?.length || prepared.customAudio?.length) ? '（含自定义提示音）' : ''));
     if (saveHistory(localStorageSafe(), item.id)) showHistory(item);
     else $('storage').textContent = '烧录已成功，但浏览器无法保存记录，无法记住本次结果。';
   } catch (error) {
