@@ -29,7 +29,7 @@ export function parseResponse(f){const lengths={[TYPE.ACK]:9,[TYPE.NACK]:5,[TYPE
  if(v.getUint8(0)>7||v.getUint8(2)>2||v.getUint8(3)!==0)throw new Error('设备状态响应无效');
  return {state:v.getUint8(0),error:v.getUint8(1),target:v.getUint8(2),expected:v.getUint32(4,true),completed:v.getUint32(8,true),size:v.getUint32(12,true)};
 }
-export function validateInfo(info){if(info.version!==1||info.chunk!==1024||info.addressBytes!==3||info.capacity!==MAX_IMAGE_SIZE||info.firmware!==0x10401||info.state>7)throw new Error('设备协议或容量不兼容，需要 1.4.1、8 MiB 设备');const names=['音频镜像更新','可变镜像长度','播放表更新','播放表摘要查询'];const missing=names.filter((name,bit)=>!(info.capabilities&(1<<bit)));if(missing.length)throw new Error(`设备缺少必要功能：${missing.join('、')}`);if(!Number.isInteger(info.tableMaxSize)||info.tableMaxSize<48||info.tableMaxSize>4096)throw new Error('设备播放表容量无效');return info;}
+export function validateInfo(info){if(info.version!==1||info.chunk!==1024||info.addressBytes!==3||info.capacity!==MAX_IMAGE_SIZE||info.firmware!==0x10500||info.state>7)throw new Error('设备协议或容量不兼容，需要 1.5.0、8 MiB 设备');const names=['音频镜像更新','可变镜像长度','播放表更新','播放表摘要查询'];const missing=names.filter((name,bit)=>!(info.capabilities&(1<<bit)));if(missing.length)throw new Error(`设备缺少必要功能：${missing.join('、')}`);if(!Number.isInteger(info.tableMaxSize)||info.tableMaxSize<48||info.tableMaxSize>4096)throw new Error('设备播放表容量无效');return info;}
 export function validateImage(bytes,capacity=MAX_IMAGE_SIZE){const n=bytes.length;if(n<512||n>Math.min(capacity,MAX_IMAGE_SIZE)||n%512)throw new Error('镜像大小必须为 512 字节的整数倍，且不超过 8 MiB 和设备容量');const v=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);const sector=v.getUint16(11,true),cluster=v.getUint8(13),reserved=v.getUint16(14,true),fats=v.getUint8(16),roots=v.getUint16(17,true),small=v.getUint16(19,true),large=v.getUint32(32,true),fatSize=v.getUint16(22,true);const total=small||large;
  if(bytes[510]!==85||bytes[511]!==170||![512,1024,2048,4096].includes(sector)||!cluster||(cluster&(cluster-1))||cluster>128||!reserved||!fats||!roots||!fatSize||(small&&large)||total*sector!==n)throw new Error('镜像必须是完整 FAT12/FAT16 卷，卷大小必须与文件一致');const dataSectors=total-reserved-fats*fatSize-Math.ceil(roots*32/sector);const clusters=Math.floor(dataSectors/cluster);if(clusters<1||clusters>=65525||fatSize*sector<Math.ceil((clusters+2)*(clusters<4085?1.5:2)))throw new Error('镜像 FAT 布局无效或不是 FAT12/FAT16');return crc32(bytes);}
 export class SerialLink {
@@ -90,7 +90,7 @@ export class SerialLink {
         });
         return parseResponse(reply);
       } catch (error) {
-        // 1.4.1 only guarantees DATA replay. Observe state instead of restarting a task.
+        // 1.5.0 only guarantees DATA replay. Observe state instead of restarting a task.
         if (error.timeout && [CMD.VOICE_PLAY_EVENT, CMD.VOICE_QUEUE, CMD.VOICE_CONTROL].includes(type)) {
           error.message = '播放命令响应超时，设备可能已接收；未自动重发，请确认设备状态';
           throw error;
@@ -257,7 +257,7 @@ export class Burner {
     await this.transfer(bytes, crc, TARGET.IMAGE);
     if (imageOnly) return true;
     try {
-      // TABLE_START follows image SUCCESS directly, as specified by 1.4.1.
+      // TABLE_START follows image SUCCESS directly, as specified by 1.5.0.
       await this.transfer(tableBytes, table.crc, TARGET.TABLE, crc);
     } catch (error) {
       if (error.name === 'AbortError' || this.signal?.aborted) throw error;

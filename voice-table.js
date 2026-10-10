@@ -52,7 +52,7 @@ export function validateTable(bytes, imageCRC, selectedLanguage, maxSize = 4096,
     const length = bytes[offset + 6];
     const key = `${event}:${value}`;
     const knownEvent = (event === 1 || event === 2) ? value >= 0 && value <= 100 :
-      [0x100, 0x101, 0x102, 0x103].includes(event) && value === -1;
+      [0x100, 0x101, 0x102, 0x103, 0x104, 0x105].includes(event) && value === -1;
     if (!knownEvent || keys.has(key) || bytes[offset + 7] !== 0 ||
         length < 1 || length > maxSequenceLength || sequenceOffset + length > poolLength) {
       throw new Error('播放表包含重复、非法条目或越界播放序列');
@@ -66,7 +66,7 @@ export function validateTable(bytes, imageCRC, selectedLanguage, maxSize = 4096,
       if (!keys.has(`${event}:${value}`)) throw new Error('播放表必须覆盖两类电量提示的 0～100');
     }
   }
-  for (const event of [0x100, 0x101, 0x102, 0x103]) {
+  for (const event of [0x100, 0x101, 0x102, 0x103, 0x104, 0x105]) {
     if (!keys.has(`${event}:-1`)) throw new Error('播放表缺少固定提示条目');
   }
   }
