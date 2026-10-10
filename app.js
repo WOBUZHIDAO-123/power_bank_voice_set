@@ -1,3 +1,4 @@
+import { createRowRecording } from './row-recording.js';
 import { SerialLink, Burner } from './protocol.js';
 import { loadCatalog, readHistory, saveHistory, fetchBytes } from './resources.js';
 import { preparePackage } from './package-client.js';
@@ -9,6 +10,8 @@ const audio = new Audio();
 let catalog = [], link = null, burner = null, prepared = null, previewURL = null;
 let busy = false, connecting = false, playing = false, audioToken = 0, operation = null;
 let connectedBefore = false, localItem = null;
+let rowRecordingBusy = false;
+const rowRecording = createRowRecording({ document, window, navigator, URL, report: message => { $('custom-status').textContent = message; }, onBusy: value => { rowRecordingBusy = value; render(); } });
 const SHOW_AUDIO_STYLE_PREVIEW = true;
 let selectedAudioId = null, listSource = null;
 const demoFiles = ['开始充电', '开始放电', '充满电', '低电量', '当前剩余电量', '正在充电', '百分之', '零', '一', '二', '三', '四'].map((name, i) => ({ id: i + 1, path: 'audio/' + String(i + 1).padStart(3, '0') + '-' + name + '.mp3' }));
@@ -21,20 +24,37 @@ function renderAudioList() {
   if (!source.some(file => file.id === selectedAudioId)) selectedAudioId = source[0]?.id ?? null;
   if (source !== listSource) {
     listSource = source;
-    $('custom-list').replaceChildren();
+    $('custom-list').replaceChildren(); rowRecording.clearViews();
     for (const file of source) {
-      const row = document.createElement('label'); row.className = 'voice-item';
+      const row = document.createElement('div'); row.className = 'voice-item';
       const radio = document.createElement('input'); radio.type = 'radio'; radio.name = 'custom-audio'; radio.value = String(file.id);
-      radio.addEventListener('change', () => { if (busy || connecting) return; stopAudio(); selectedAudioId = file.id; render(); });
+      radio.addEventListener('change', () => { if (busy || connecting || rowRecordingBusy) return; selectedAudioId = file.id; render(); playListAudio(file); });
       const number = document.createElement('span'); number.className = 'voice-number'; number.textContent = String(file.id).padStart(3, '0');
       const info = document.createElement('span'); info.className = 'voice-info';
       const name = document.createElement('span'); name.className = 'voice-name'; name.textContent = file.path?.split('/').at(-1) ?? '音频 ' + file.id;
       const meta = document.createElement('span'); meta.className = 'voice-meta'; meta.textContent = file.replacementName ? '已替换 · ' + file.replacementName : file.bytes ? (file.bytes.length / 1024).toFixed(1) + ' KiB · ' + file.extension.toUpperCase() : '示例音频';
-      info.append(name, meta); row.append(radio, number, info); $('custom-list').append(row);
+      info.append(name, meta); row.append(radio, number, info);
+      const controls = document.createElement('div'); controls.className = 'voice-row-actions';
+      const progressButton = document.createElement('button'); progressButton.type = 'button'; progressButton.className = 'clip-progress';
+      const caption = document.createElement('span'); const bar = document.createElement('progress'); bar.max = 100; bar.value = 0;
+      progressButton.append(caption, bar); progressButton.setAttribute('aria-label', '试听编号 ' + file.id + ' 的录音');
+      const record = document.createElement('button'); record.type = 'button'; record.className = 'row-record'; record.setAttribute('aria-label', '录制编号 ' + file.id);
+      record.addEventListener('click', () => stopAudio());
+      const upload = document.createElement('label'); upload.className = 'row-upload'; upload.textContent = '上传音频';
+      const input = document.createElement('input'); input.type = 'file'; input.accept = '.mp3,.wav,audio/mpeg,audio/wav'; input.setAttribute('aria-label','替换编号 ' + file.id);
+      input.addEventListener('change', async () => {
+        if (busy || connecting || rowRecordingBusy || !prepared?.editable) return;
+        selectedAudioId = file.id;
+        await replaceSelectedFile(input.files?.[0]); input.value = '';
+      });
+      upload.append(input); controls.append(progressButton, record, upload); row.append(controls); $('custom-list').append(row);
+      rowRecording.mount(file.id, {record, progress:progressButton, caption, bar});
+      row.addEventListener('click', event => { if (event.target === row || event.target === info || event.target === name || event.target === number || event.target === meta) { if (!busy && !connecting && !rowRecordingBusy) { selectedAudioId = file.id; render(); playListAudio(file); } } });
     }
   }
   for (const row of $('custom-list').children) {
-    const radio = row.children[0]; radio.checked = Number(radio.value) === selectedAudioId; radio.disabled = busy || connecting;
+    const radio = row.children[0]; radio.checked = Number(radio.value) === selectedAudioId; radio.disabled = busy || connecting || rowRecordingBusy;
+    const actions = row.children[3]; actions.children[1].disabled = busy || connecting; actions.children[2].children[0].disabled = busy || connecting || rowRecordingBusy || !files;
     row.classList.toggle('selected', radio.checked);
   }
   const selected = source.find(file => file.id === selectedAudioId);
@@ -46,18 +66,19 @@ const chosen = () => localItem ?? catalog.find(item => item.id === $('language')
 
 function render() {
   renderAudioList();
+  const controlsBusy = busy || rowRecordingBusy;
   const supported = window.isSecureContext && 'serial' in navigator;
-  $('connect').disabled = busy || connecting || !supported;
+  $('connect').disabled = controlsBusy || connecting || !supported;
   $('connect').textContent = connecting ? '正在连接…' : link && !link.closed ? '重新连接' : '连接设备';
-  $('local-package').disabled = busy || connecting;
-  $('audio-only').disabled = busy || connecting;
+  $('local-package').disabled = controlsBusy || connecting;
+  $('audio-only').disabled = controlsBusy || connecting;
   $('start').textContent = prepared?.audioOnly ? '开始音频试烧' : '开始烧录';
-  $('language').disabled = busy || connecting || !catalog.length;
-  $('preview').disabled = busy || connecting || !prepared;
+  $('language').disabled = controlsBusy || connecting || !catalog.length;
+  $('preview').disabled = controlsBusy || connecting || !prepared;
   $('preview').textContent = playing ? '停止试听' : '试听';
-  $('start').disabled = busy || connecting || !prepared || !link || link.closed;
+  $('start').disabled = controlsBusy || connecting || rowRecordingBusy || !prepared || !link || link.closed;
   for (const id of ['voice-event','voice-value','voice-ids','voice-play','voice-queue','voice-stop','voice-sleep','voice-wake']) {
-    $(id).disabled = busy || connecting || !link || link.closed;
+    $(id).disabled = controlsBusy || connecting || !link || link.closed;
   }
   $('cancel').disabled = !busy || !operation || operation.signal.aborted;
 }
@@ -66,6 +87,7 @@ function stopAudio() {
   playing = false; render();
 }
 function discardPrepared() {
+  rowRecording.reset();
   stopAudio();
   if (previewURL) URL.revokeObjectURL(previewURL);
   previewURL = null; prepared = null; selectedAudioId = null; $('file-map').textContent = ''; $('custom-status').textContent = '';
@@ -126,6 +148,16 @@ function showPrepared(bundle, item) {
     progress(bundle.audioOnly ? '音频试烧已就绪（仅写镜像）' : '语音包已就绪，可以试听或烧录', 0);
 }
 
+async function playListAudio(file) {
+  rowRecording.pause(); stopAudio();
+  if (!file.bytes) { $('custom-status').textContent = '示例音频没有原始声音；可点击录音测试并试听。'; return; }
+  const token = audioToken;
+  if (previewURL) URL.revokeObjectURL(previewURL);
+  previewURL = URL.createObjectURL(new Blob([file.bytes], {type:file.extension === 'mp3' ? 'audio/mpeg' : 'audio/wav'}));
+  audio.src = previewURL; playing = true; render();
+  try { await audio.play(); } catch { if (token === audioToken) { playing = false; render(); $('audio-message').textContent = '选中的音频无法试听。'; } }
+}
+
 $('custom-preview').addEventListener('click', async () => {
   if (busy || connecting) return;
   const file = prepared?.editable?.files.find(row => row.id === selectedAudioId);
@@ -137,9 +169,9 @@ $('custom-preview').addEventListener('click', async () => {
   try { await audio.play(); } catch { if (token === audioToken) { playing = false; $('audio-message').textContent = '此音频无法在浏览器试听。'; render(); } }
 });
 
-$('custom-file').addEventListener('change', async () => {
+$('custom-file').addEventListener('change', () => replaceSelectedFile($('custom-file').files?.[0]));
+async function replaceSelectedFile(file) {
   if (busy || connecting || !prepared?.editable) return;
-  const file = $('custom-file').files?.[0];
   if (!file) return;
   $('custom-file').value = '';
   const fileId = selectedAudioId, item = chosen();
@@ -159,7 +191,7 @@ $('custom-file').addEventListener('change', async () => {
     progress('保留原准备结果', 0);
     result(signal.aborted ? '替换已取消，未写入设备。' : error.message + '。替换未生效，未写入设备。', !signal.aborted);
   } finally { busy = false; operation = null; render(); }
-});
+}
 
 $('audio-only').addEventListener('change', () => {
   if (busy || connecting) return;
