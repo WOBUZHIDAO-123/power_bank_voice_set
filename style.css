@@ -24,3 +24,13 @@
   .voice-item{flex-wrap:wrap}
   .voice-row-actions{width:100%;justify-content:flex-end}
 }
+
+/* Use the browser width on desktop; keep only a small safe gutter. */
+@media(min-width:901px){
+  main{width:calc(100% - 32px);max-width:1400px;padding:0}
+  section{padding:28px 32px}
+  .voice-item{grid-template-columns:auto auto minmax(340px,1fr) auto}
+  .voice-info{min-width:340px}
+  .voice-row-actions>*{width:150px;flex-basis:150px}
+}
+@media(min-width:1401px){main{width:calc(100% - 48px)}}
