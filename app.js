@@ -13,7 +13,8 @@ let connectedBefore = false, localItem = null;
 let rowRecordingBusy = false;
 const rowRecording = createRowRecording({ document, window, navigator, URL, report: message => { $('custom-status').textContent = message; }, onBusy: value => { rowRecordingBusy = value; render(); } });
 const SHOW_AUDIO_STYLE_PREVIEW = true;
-let selectedAudioId = null, listSource = null;
+let selectedAudioId = null, listSource = null, currentListAudioId = null;
+const listAudioViews = new Map();
 const demoFiles = ['开始充电', '开始放电', '充满电', '低电量', '当前剩余电量', '正在充电', '百分之', '零', '一', '二', '三', '四'].map((name, i) => ({ id: i + 1, path: 'audio/' + String(i + 1).padStart(3, '0') + '-' + name + '.mp3' }));
 function renderAudioList() {
   const files = prepared?.editable?.files;
@@ -32,7 +33,12 @@ function renderAudioList() {
       const number = document.createElement('span'); number.className = 'voice-number'; number.textContent = String(file.id).padStart(3, '0');
       const info = document.createElement('span'); info.className = 'voice-info';
       const name = document.createElement('span'); name.className = 'voice-name'; name.textContent = file.path?.split('/').at(-1) ?? '音频 ' + file.id;
-      const meta = document.createElement('span'); meta.className = 'voice-meta'; meta.textContent = file.replacementName ? '已替换 · ' + file.replacementName : file.bytes ? (file.bytes.length / 1024).toFixed(1) + ' KiB · ' + file.extension.toUpperCase() : '示例音频';
+      const meta = document.createElement('button'); meta.type = 'button'; meta.className = 'source-progress';
+      const sourceCaption = document.createElement('span');
+      const sourceBar = document.createElement('progress'); sourceBar.max = 100; sourceBar.value = 0;
+      meta.append(sourceCaption, sourceBar); meta.setAttribute('aria-label', '播放编号 ' + file.id + ' 的当前音频');
+      meta.addEventListener('click', event => { event.stopPropagation(); playListAudio(file, true); });
+      listAudioViews.set(file.id, { button: meta, caption: sourceCaption, bar: sourceBar, file });
       info.append(name, meta); row.append(radio, number, info);
       const controls = document.createElement('div'); controls.className = 'voice-row-actions';
       const progressButton = document.createElement('button'); progressButton.type = 'button'; progressButton.className = 'clip-progress';
@@ -62,6 +68,16 @@ function renderAudioList() {
   $('custom-file').disabled = busy || connecting || !files || !selected;
   $('custom-preview').disabled = busy || connecting || !files || !selected;
 }
+function updateListAudioProgress() {
+  for (const [id, view] of listAudioViews) {
+    const active = currentListAudioId === id && audio.hasAttribute('src');
+    const duration = active && Number.isFinite(audio.duration) ? audio.duration : 0;
+    const elapsed = active && Number.isFinite(audio.currentTime) ? audio.currentTime : 0;
+    view.button.disabled = busy || connecting || rowRecordingBusy || !view.file.bytes;
+    view.caption.textContent = active ? (audio.paused ? '▶ ' : '❚❚ ') + Math.floor(elapsed) + ' / ' + Math.floor(duration) + ' 秒' : '▶ 0 / 0 秒';
+    view.bar.value = duration ? elapsed / duration * 100 : 0;
+  }
+}
 const chosen = () => localItem ?? catalog.find(item => item.id === $('language').value);
 
 function render() {
@@ -84,7 +100,7 @@ function render() {
 }
 function stopAudio() {
   audioToken++; audio.pause(); audio.removeAttribute('src'); audio.load();
-  playing = false; render();
+  currentListAudioId = null; playing = false; render();
 }
 function discardPrepared() {
   rowRecording.reset();
@@ -148,14 +164,21 @@ function showPrepared(bundle, item) {
     progress(bundle.audioOnly ? '音频试烧已就绪（仅写镜像）' : '语音包已就绪，可以试听或烧录', 0);
 }
 
-async function playListAudio(file) {
-  rowRecording.pause(); stopAudio();
+async function playListAudio(file, toggle = false) {
+  rowRecording.pause();
+  if (toggle && currentListAudioId === file.id && audio.hasAttribute('src')) {
+    if (audio.paused) { try { await audio.play(); } catch { $('audio-message').textContent = '选中的音频无法试听。'; } }
+    else audio.pause();
+    updateListAudioProgress();
+    return;
+  }
+  stopAudio();
   if (!file.bytes) { $('custom-status').textContent = '示例音频没有原始声音；可点击录音测试并试听。'; return; }
   const token = audioToken;
   if (previewURL) URL.revokeObjectURL(previewURL);
   previewURL = URL.createObjectURL(new Blob([file.bytes], {type:file.extension === 'mp3' ? 'audio/mpeg' : 'audio/wav'}));
-  audio.src = previewURL; playing = true; render();
-  try { await audio.play(); } catch { if (token === audioToken) { playing = false; render(); $('audio-message').textContent = '选中的音频无法试听。'; } }
+  audio.src = previewURL; currentListAudioId = file.id; playing = true; render();
+  try { await audio.play(); } catch { if (token === audioToken) { currentListAudioId = null; playing = false; render(); $('audio-message').textContent = '选中的音频无法试听。'; } }
 }
 
 $('custom-preview').addEventListener('click', async () => {
@@ -165,7 +188,7 @@ $('custom-preview').addEventListener('click', async () => {
   stopAudio(); const token = audioToken;
   if (previewURL) URL.revokeObjectURL(previewURL);
   previewURL = URL.createObjectURL(new Blob([file.bytes], { type: file.extension === 'mp3' ? 'audio/mpeg' : 'audio/wav' }));
-  audio.src = previewURL; playing = true; render();
+  audio.src = previewURL; currentListAudioId = file.id; playing = true; render();
   try { await audio.play(); } catch { if (token === audioToken) { playing = false; $('audio-message').textContent = '此音频无法在浏览器试听。'; render(); } }
 });
 
@@ -233,7 +256,11 @@ $('local-package').addEventListener('change', async () => {
   } finally { busy = false; operation = null; render(); }
 });
 
-audio.addEventListener('ended', () => { playing = false; render(); });
+audio.addEventListener('timeupdate', updateListAudioProgress);
+audio.addEventListener('loadedmetadata', updateListAudioProgress);
+audio.addEventListener('play', updateListAudioProgress);
+audio.addEventListener('pause', updateListAudioProgress);
+audio.addEventListener('ended', () => { playing = false; updateListAudioProgress(); render(); });
 audio.addEventListener('error', () => {
   if (!audio.hasAttribute('src')) return;
   playing = false; $('audio-message').textContent = '试听暂不可用，不影响烧录。'; render();
