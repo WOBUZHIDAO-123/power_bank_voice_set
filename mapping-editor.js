@@ -15,6 +15,17 @@ export function mountMappingEditor({ document, getPrepared, usePackage, stopAudi
   const player = document.createElement('audio');
   let filter = '全部';
   const status = message => { $('mapping-status').textContent = message; };
+  const setLanguage = tag => {
+    const select = $('mapping-language');
+    const value = tag || 'zh-CN';
+    if (![...select.options].some(option => option.value === value)) {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = value;
+      select.append(option);
+    }
+    select.value = value;
+  };
   const guard = () => {
     if (getBusy()) { status('请等待当前操作结束。'); return true; }
     return false;
@@ -157,7 +168,7 @@ export function mountMappingEditor({ document, getPrepared, usePackage, stopAudi
     if (!source?.files?.length) { status('请先加载带 voice.json 的完整语音包。'); return; }
     try {
       mapping.language = prepared.languageTag || $('mapping-language').value.trim() || 'zh-CN';
-      $('mapping-language').value = mapping.language;
+      setLanguage(mapping.language);
       mapping.loadAssigned(source.files.map(file => ({ fileId: file.id, text: file.text, bytes: file.bytes, name: file.path?.split('/').at(-1) })));
       mapping.adoptEntries(source.entries);
       render();
@@ -182,7 +193,7 @@ export function mountMappingEditor({ document, getPrepared, usePackage, stopAudi
     if (!file || guard()) return;
     try {
       mapping.applyMapping(JSON.parse(await file.text()));
-      $('mapping-language').value = mapping.language;
+      setLanguage(mapping.language);
       render();
       status('映射已加载。');
     } catch (error) { status(error.message); }
