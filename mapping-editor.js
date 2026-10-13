@@ -1,4 +1,5 @@
 import { allEventKeys, createVoiceMapping } from './voice-mapping.js';
+import { compilePackage } from './voice-package.js';
 
 const download = (filename, bytes, type) => {
   const link = document.createElement('a');
@@ -190,10 +191,14 @@ export function mountMappingEditor({ document, getPrepared, usePackage, stopAudi
     mapping.language = $('mapping-language').value.trim() || 'zh-CN';
     return mapping.exportZip($('mapping-incomplete').checked);
   };
-  $('mapping-export').addEventListener('click', () => {
+  $('mapping-export').addEventListener('click', async () => {
     if (guard()) return;
-    try { download('voice-package.zip', buildZip(), 'application/zip'); status('ZIP 已下载。'); }
-    catch (error) { status(error.message); }
+    try {
+      const bytes = buildZip();
+      await compilePackage(bytes, mapping.language);
+      download('voice-package.zip', bytes, 'application/zip');
+      status('ZIP 已下载，并通过语音包检查。');
+    } catch (error) { status(error.message); }
   });
   $('mapping-burn').addEventListener('click', async () => {
     if (guard()) return;
