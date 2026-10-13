@@ -1,5 +1,7 @@
+import { encodeWav, waveformBounds } from './silence-trim.js';
+
 // Row recordings are local previews; no package bytes or device commands are modified.
-export function createRowRecording({ document, window, navigator, URL, report, onBusy = () => {} }) {
+export function createRowRecording({ document, window, navigator, URL, report, decode, onBusy = () => {} }) {
   const clips = new Map(), views = new Map();
   const player = document.createElement('audio');
   let active = null, generation = 0, current = null, interval = null;
@@ -48,15 +50,32 @@ export function createRowRecording({ document, window, navigator, URL, report, o
       let failed = false, size = 0; const chunks = [];
       recorder.ondataavailable = event => { if (event.data.size) {chunks.push(event.data); size += event.data.size;} if (size > 8*1024*1024 && recorder.state === 'recording') recorder.stop(); };
       recorder.onerror = () => {failed = true; report('录音失败，请重试。'); if (recorder.state === 'recording') recorder.stop(); else { release(session); active = null; onBusy(false); update(id); }};
-      recorder.onstop = () => {
+      recorder.onstop = async () => {
         if (token !== generation) return;
-        const duration = (Date.now()-session.began)/1000;
+        const captured = (Date.now()-session.began)/1000;
         release(session); active = null; onBusy(false);
         const blob = new Blob(chunks,{type:recorder.mimeType || chunks[0]?.type || 'audio/webm'});
         if (!failed && blob.size && blob.size <= 8*1024*1024) {
+          let stored = blob, duration = captured;
+          let message = '录音完成，已去掉首尾空白。当前录音仅供试听，未替换烧录资源。';
+          try {
+            const audio = await decode(blob);
+            if (token !== generation) return;
+            const { start, end } = waveformBounds(audio.channels, audio.sampleRate);
+            stored = new Blob([encodeWav(audio.channels, audio.sampleRate, start, end)], { type: 'audio/wav' });
+            duration = (end - start) / audio.sampleRate;
+          } catch (error) {
+            if (token !== generation) return;
+            if (String(error?.message || '').includes('没有检测到有效声音')) {
+              report('没有检测到有效声音，请重试。');
+              update(id);
+              return;
+            }
+            message = '静音裁剪未完成，已保留原录音。当前录音仅供试听，未替换烧录资源。';
+          }
           if (clips.has(id)) URL.revokeObjectURL(clips.get(id).url);
-          clips.set(id,{url:URL.createObjectURL(blob),duration});
-          report('录音完成，点击进度条试听。当前录音仅供试听，未替换烧录资源。');
+          clips.set(id,{url:URL.createObjectURL(stored),duration});
+          report(message);
         } else if (!failed) report('录音为空或超过 8 MiB，请重试。');
         update(id);
       };

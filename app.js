@@ -1,4 +1,5 @@
 import { createRowRecording } from './row-recording.js';
+import { decodeRecording } from './silence-trim.js';
 import { SerialLink, Burner } from './protocol.js';
 import { loadCatalog, readHistory, saveHistory } from './resources.js';
 import { preparePackage } from './package-client.js';
@@ -12,7 +13,7 @@ let catalog = [], link = null, burner = null, prepared = null, previewURL = null
 let busy = false, connecting = false, playing = false, audioToken = 0, operation = null;
 let connectedBefore = false, localItem = null;
 let rowRecordingBusy = false;
-const rowRecording = createRowRecording({ document, window, navigator, URL, report: message => { $('custom-status').textContent = message; }, onBusy: value => { rowRecordingBusy = value; render(); } });
+const rowRecording = createRowRecording({ document, window, navigator, URL, decode: decodeRecording, report: message => { $('custom-status').textContent = message; }, onBusy: value => { rowRecordingBusy = value; render(); } });
 let selectedAudioId = null, listSource = null, currentListAudioId = null;
 const listAudioViews = new Map();
 const listDurationCache = new Map();
