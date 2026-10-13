@@ -4,6 +4,7 @@ import { loadCatalog, readHistory, saveHistory, fetchBytes } from './resources.j
 import { preparePackage } from './package-client.js';
 import { MAX_ZIP_SIZE, checkCancelled } from './zip.js';
 import { checkConnection } from './connection-check.js';
+import { mountMappingEditor } from './mapping-editor.js';
 
 const $ = id => document.getElementById(id);
 const audio = new Audio();
@@ -276,30 +277,24 @@ $('audio-only').addEventListener('change', () => {
   $('resource').textContent = '模式已切换，请重新选择本地 ZIP。'; render();
 });
 
-$('local-package').addEventListener('change', async () => {
-  if (busy || connecting) return;
-  const file = $('local-package').files?.[0];
-  if (!file) return;
-  const selected = catalog.find(item => item.id === $('language').value);
+async function loadPackageBytes(bytes, name, languageTag) {
+  if (busy || connecting) throw new Error('请等待当前操作结束。');
+  const selected = languageTag ? { languageTag } : catalog.find(item => item.id === $('language').value);
   discardPrepared(); localItem = null;
-  $('local-package').value = ''; // Permit choosing the same file again after a failure.
   $('audio-message').textContent = ''; $('resource').textContent = ''; result('');
   busy = true; operation = new AbortController(); render();
   const signal = operation.signal;
   try {
-    if (!/\.zip$/i.test(file.name)) throw new Error('请选择 ZIP 格式的语音包');
-    if (!file.size || file.size > MAX_ZIP_SIZE) throw new Error('语音 ZIP 必须非空且不超过 16 MiB');
+    if (!bytes?.length || bytes.length > MAX_ZIP_SIZE) throw new Error('语音 ZIP 必须非空且不超过 16 MiB');
     progress('读取本地语音包', 0);
-    const bytes = new Uint8Array(await file.arrayBuffer());
     checkCancelled(signal);
-    if (bytes.length !== file.size) throw new Error('本地文件读取不完整，请重新选择');
     const bundle = await preparePackage(bytes, selected?.languageTag, { signal, onProgress: progress, audioOnly: $('audio-only').checked });
     checkCancelled(signal);
     const match = catalog.find(item => item.languageTag === bundle.languageTag);
     localItem = { id: 'local:' + bundle.languageTag, name: match?.name ?? bundle.languageTag, languageTag: bundle.languageTag };
     $('language').value = match?.id ?? '';
     showPrepared(bundle, localItem);
-    $('resource').textContent = '本地文件：' + file.name + (bundle.audioOnly ? '。' : '；语种：' + bundle.languageTag + '。') + $('resource').textContent;
+    $('resource').textContent = '本地文件：' + name + (bundle.audioOnly ? '。' : '；语种：' + bundle.languageTag + '。') + $('resource').textContent;
   } catch (error) {
     discardPrepared(); localItem = null;
     if (signal.aborted || error.name === 'AbortError') {
@@ -307,7 +302,21 @@ $('local-package').addEventListener('change', async () => {
     } else {
       progress('语音包准备失败', 0); result(error.message + '。设备未被修改，请重新选择 ZIP。', true);
     }
+    throw error;
   } finally { busy = false; operation = null; render(); }
+}
+$('local-package').addEventListener('change', async () => {
+  if (busy || connecting) return;
+  const file = $('local-package').files?.[0];
+  if (!file) return;
+  $('local-package').value = ''; // Permit choosing the same file again after a failure.
+  try {
+    if (!/\.zip$/i.test(file.name)) { result('请选择 ZIP 格式的语音包。设备未被修改。', true); return; }
+    if (!file.size || file.size > MAX_ZIP_SIZE) { result('语音 ZIP 必须非空且不超过 16 MiB。设备未被修改。', true); return; }
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    if (bytes.length !== file.size) { result('本地文件读取不完整，请重新选择。设备未被修改。', true); return; }
+    await loadPackageBytes(bytes, file.name);
+  } catch { /* loadPackageBytes already reported the failure */ }
 });
 
 audio.addEventListener('timeupdate', updateListAudioProgress);
@@ -444,4 +453,5 @@ async function init() {
   }
   render();
 }
+mountMappingEditor({ document, getPrepared: () => prepared, usePackage: (bytes, language) => loadPackageBytes(bytes, 'mapping.zip', language), stopAudio, getBusy: () => busy || connecting });
 init();

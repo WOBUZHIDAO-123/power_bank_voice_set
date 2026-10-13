@@ -133,3 +133,39 @@ export async function unzip(bytes, { signal, include = () => true } = {}) {
   }
   return files;
 }
+
+// Ordinary stored ZIP with the UTF-8 name flag. Compatible with unzip().
+export function zipStore(entries) {
+  const files = [...entries];
+  if (!files.length || files.length > 2048) throw new Error('ZIP 文件数量必须为 1～2048');
+  const locals = [], centrals = [];
+  let localOffset = 0, centralSize = 0, total = 0;
+  for (const [name, bytes] of files) {
+    const path = packagePath(name);
+    if (!(bytes instanceof Uint8Array)) throw new Error('ZIP 内容必须是字节');
+    total += bytes.length;
+    if (total > MAX_ZIP_SIZE) throw new Error('ZIP 超过 16 MiB');
+    const filename = new TextEncoder().encode(path);
+    const local = new Uint8Array(30 + filename.length + bytes.length);
+    const view = new DataView(local.buffer);
+    const checksum = crc32(bytes);
+    view.setUint32(0, 0x04034b50, true); view.setUint16(4, 20, true); view.setUint16(6, 0x800, true);
+    view.setUint32(14, checksum, true); view.setUint32(18, bytes.length, true); view.setUint32(22, bytes.length, true);
+    view.setUint16(26, filename.length, true);
+    local.set(filename, 30); local.set(bytes, 30 + filename.length);
+    const central = new Uint8Array(46 + filename.length), centralView = new DataView(central.buffer);
+    centralView.setUint32(0, 0x02014b50, true); centralView.setUint16(4, 20, true); centralView.setUint16(6, 20, true);
+    centralView.setUint16(8, 0x800, true); centralView.setUint32(16, checksum, true);
+    centralView.setUint32(20, bytes.length, true); centralView.setUint32(24, bytes.length, true);
+    centralView.setUint16(28, filename.length, true); centralView.setUint32(42, localOffset, true);
+    central.set(filename, 46);
+    locals.push(local); centrals.push(central); localOffset += local.length; centralSize += central.length;
+  }
+  const end = new Uint8Array(22), endView = new DataView(end.buffer);
+  endView.setUint32(0, 0x06054b50, true); endView.setUint16(8, files.length, true); endView.setUint16(10, files.length, true);
+  endView.setUint32(12, centralSize, true); endView.setUint32(16, localOffset, true);
+  const zip = new Uint8Array(localOffset + centralSize + 22);
+  let offset = 0;
+  for (const part of [...locals, ...centrals, end]) { zip.set(part, offset); offset += part.length; }
+  return zip;
+}
