@@ -53,7 +53,7 @@ function ensureListDuration(file) {
 const demoFiles = ['开始充电', '开始放电', '充满电', '低电量', '当前剩余电量', '正在充电', '百分之', '零', '一', '二', '三', '四'].map((name, i) => ({ id: i + 1, path: 'audio/' + String(i + 1).padStart(3, '0') + '-' + name + '.mp3' }));
 function renderAudioList() {
   const files = prepared?.editable?.files;
-  const source = files ?? demoFiles;
+  const source = files ?? prepared?.audioFiles ?? demoFiles;
   $('custom-panel').hidden = !files && !SHOW_AUDIO_STYLE_PREVIEW;
   $('custom-count').textContent = source.length + ' 条' + (files ? '' : ' · 样式预览');
   $('custom-help').textContent = files ? '选择任意音频，可试听并上传替换。列表来自当前语音包。' : prepared ? '此包暂不支持编辑。下方仅展示样式示例，请使用 voice.json＋原始音频完整包。' : '当前是示例列表，供查看样式；加载语音包后会显示真实音频。';
@@ -67,7 +67,8 @@ function renderAudioList() {
       radio.addEventListener('change', () => { if (busy || connecting || rowRecordingBusy) return; selectedAudioId = file.id; render(); playListAudio(file); });
       const number = document.createElement('span'); number.className = 'voice-number'; number.textContent = String(file.id).padStart(3, '0');
       const info = document.createElement('span'); info.className = 'voice-info';
-      const name = document.createElement('span'); name.className = 'voice-name'; name.textContent = file.path?.split('/').at(-1) ?? '音频 ' + file.id;
+      const filename = file.path?.split('/').at(-1) ?? ('音频 ' + file.id);
+      const name = document.createElement('span'); name.className = 'voice-name'; name.textContent = file.text || filename;
       const meta = document.createElement('div'); meta.className = 'source-progress';
       const sourceCaption = document.createElement('span'); sourceCaption.className = 'source-time';
       const sourceBar = document.createElement('input'); sourceBar.type = 'range'; sourceBar.min = '0'; sourceBar.max = '1000'; sourceBar.value = '0'; sourceBar.step = '1';

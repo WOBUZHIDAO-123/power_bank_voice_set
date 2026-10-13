@@ -66,7 +66,7 @@ export async function compilePackage(zipBytes, expectedLanguage, { signal, onPro
     if (rows.length > 255) throw new Error('音频试烧最多支持 255 个文件');
     const used = new Set();
     const files = rows.map(([path, bytes]) => {
-      const prefix = /^(\d{3})(?:[-_.])/.exec(path.split('/').at(-1));
+      const prefix = /^(\d{3})(?!\d)/.exec(path.split('/').at(-1));
       const id = prefix ? Number(prefix[1]) : 0;
       if (id < 1 || id > 255) throw new Error('音频文件名需以 001～255 的三位编号开头，不自动改号：' + path);
       if (used.has(id)) throw new Error('音频编号重复，不自动改号：' + path);
@@ -82,7 +82,7 @@ export async function compilePackage(zipBytes, expectedLanguage, { signal, onPro
     const first = files[0];
     return { image, table: new Uint8Array(), languageTag: expectedLanguage ? languageTag(expectedLanguage) : 'und',
       fileCount: files.length, entryCount: 0, audioOnly: true,
-      audioFiles: files.map(({ id, path }) => ({ id, path })),
+      audioFiles: files.map(({ id, path, bytes, extension }) => ({ id, path, bytes, extension })),
       preview: first.bytes.length <= 4 * 1024 * 1024 ? first.bytes.slice() : new Uint8Array(),
       previewType: first.extension === 'mp3' ? 'audio/mpeg' : 'audio/wav' };
   }
