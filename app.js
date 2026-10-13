@@ -15,6 +15,41 @@ const rowRecording = createRowRecording({ document, window, navigator, URL, repo
 const SHOW_AUDIO_STYLE_PREVIEW = true;
 let selectedAudioId = null, listSource = null, currentListAudioId = null;
 const listAudioViews = new Map();
+const listDurationCache = new Map();
+let seekingListAudio = false;
+function formatClock(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0) return '--:--';
+  const total = Math.floor(seconds);
+  return Math.floor(total / 60) + ':' + String(total % 60).padStart(2, '0');
+}
+function listDurationKey(file) {
+  return file.id + ':' + (file.bytes?.byteLength ?? 0) + ':' + (file.extension || '');
+}
+function rememberListDuration(file, seconds) {
+  if (!file?.bytes || !Number.isFinite(seconds) || seconds <= 0) return;
+  const key = listDurationKey(file);
+  if (listDurationCache.get(key) === seconds) return;
+  listDurationCache.set(key, seconds);
+}
+function ensureListDuration(file) {
+  if (!file?.bytes) return;
+  const key = listDurationKey(file);
+  if (listDurationCache.has(key)) return;
+  listDurationCache.set(key, null);
+  const url = URL.createObjectURL(new Blob([file.bytes], { type: file.extension === 'mp3' ? 'audio/mpeg' : 'audio/wav' }));
+  const probe = new Audio();
+  const finish = seconds => {
+    if (Number.isFinite(seconds) && seconds > 0) listDurationCache.set(key, seconds);
+    else listDurationCache.delete(key);
+    URL.revokeObjectURL(url);
+    probe.removeAttribute('src'); probe.load();
+    updateListAudioProgress();
+  };
+  probe.preload = 'metadata';
+  probe.addEventListener('loadedmetadata', () => finish(probe.duration), { once: true });
+  probe.addEventListener('error', () => finish(NaN), { once: true });
+  probe.src = url;
+}
 const demoFiles = ['开始充电', '开始放电', '充满电', '低电量', '当前剩余电量', '正在充电', '百分之', '零', '一', '二', '三', '四'].map((name, i) => ({ id: i + 1, path: 'audio/' + String(i + 1).padStart(3, '0') + '-' + name + '.mp3' }));
 function renderAudioList() {
   const files = prepared?.editable?.files;
@@ -33,12 +68,24 @@ function renderAudioList() {
       const number = document.createElement('span'); number.className = 'voice-number'; number.textContent = String(file.id).padStart(3, '0');
       const info = document.createElement('span'); info.className = 'voice-info';
       const name = document.createElement('span'); name.className = 'voice-name'; name.textContent = file.path?.split('/').at(-1) ?? '音频 ' + file.id;
-      const meta = document.createElement('button'); meta.type = 'button'; meta.className = 'source-progress';
-      const sourceCaption = document.createElement('span');
-      const sourceBar = document.createElement('progress'); sourceBar.max = 100; sourceBar.value = 0;
-      meta.append(sourceCaption, sourceBar); meta.setAttribute('aria-label', '播放编号 ' + file.id + ' 的当前音频');
-      meta.addEventListener('click', event => { event.stopPropagation(); playListAudio(file, true); });
-      listAudioViews.set(file.id, { button: meta, caption: sourceCaption, bar: sourceBar, file });
+      const meta = document.createElement('div'); meta.className = 'source-progress';
+      const sourceCaption = document.createElement('span'); sourceCaption.className = 'source-time';
+      const sourceBar = document.createElement('input'); sourceBar.type = 'range'; sourceBar.min = '0'; sourceBar.max = '1000'; sourceBar.value = '0'; sourceBar.step = '1';
+      sourceBar.setAttribute('aria-label', '拖动编号 ' + file.id + ' 的播放进度');
+      const seek = event => {
+        event.stopPropagation();
+        if (currentListAudioId !== file.id || !Number.isFinite(audio.duration) || audio.duration <= 0) return;
+        seekingListAudio = true;
+        audio.currentTime = (Number(sourceBar.value) / 1000) * audio.duration;
+        updateListAudioProgress();
+      };
+      sourceBar.addEventListener('pointerdown', seek);
+      sourceBar.addEventListener('input', seek);
+      sourceBar.addEventListener('change', event => { seek(event); seekingListAudio = false; });
+      sourceBar.addEventListener('click', event => event.stopPropagation());
+      meta.append(sourceCaption, sourceBar);
+      meta.addEventListener('click', event => { if (event.target === sourceBar) return; event.stopPropagation(); playListAudio(file, true); });
+      listAudioViews.set(file.id, { caption: sourceCaption, bar: sourceBar, file });
       info.append(name, meta); row.append(radio, number, info);
       const controls = document.createElement('div'); controls.className = 'voice-row-actions';
       const progressButton = document.createElement('button'); progressButton.type = 'button'; progressButton.className = 'clip-progress';
@@ -63,6 +110,8 @@ function renderAudioList() {
     const actions = row.children[3]; actions.children[1].disabled = busy || connecting; actions.children[2].children[0].disabled = busy || connecting || rowRecordingBusy || !files;
     row.classList.toggle('selected', radio.checked);
   }
+  for (const file of source) ensureListDuration(file);
+  updateListAudioProgress();
   const selected = source.find(file => file.id === selectedAudioId);
   $('custom-selected').textContent = selected ? '已选择：' + (selected.path?.split('/').at(-1) ?? selected.id) : '请选择一条音频';
   $('custom-file').disabled = busy || connecting || !files || !selected;
@@ -71,11 +120,14 @@ function renderAudioList() {
 function updateListAudioProgress() {
   for (const [id, view] of listAudioViews) {
     const active = currentListAudioId === id && audio.hasAttribute('src');
-    const duration = active && Number.isFinite(audio.duration) ? audio.duration : 0;
+    if (active && Number.isFinite(audio.duration)) rememberListDuration(view.file, audio.duration);
+    const known = listDurationCache.get(listDurationKey(view.file));
+    const duration = active && Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : (Number.isFinite(known) ? known : 0);
     const elapsed = active && Number.isFinite(audio.currentTime) ? audio.currentTime : 0;
-    view.button.disabled = busy || connecting || rowRecordingBusy || !view.file.bytes;
-    view.caption.textContent = active ? (audio.paused ? '▶ ' : '❚❚ ') + Math.floor(elapsed) + ' / ' + Math.floor(duration) + ' 秒' : '▶ 0 / 0 秒';
-    view.bar.value = duration ? elapsed / duration * 100 : 0;
+    const unavailable = busy || connecting || rowRecordingBusy || !view.file.bytes;
+    view.bar.disabled = unavailable || !active || !duration;
+    view.caption.textContent = (active && !audio.paused ? '❚❚ ' : '▶ ') + formatClock(elapsed) + ' / ' + (duration ? formatClock(duration) : '--:--');
+    if (!(active && seekingListAudio)) view.bar.value = duration ? String(Math.round(elapsed / duration * 1000)) : '0';
   }
 }
 const chosen = () => localItem ?? catalog.find(item => item.id === $('language').value);
