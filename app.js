@@ -302,7 +302,7 @@ async function submitCloneRecording(blob) {
     cloneStatus(String(error?.message || '').includes('没有检测到有效声音') ? '没有检测到有效声音，请重新录。' : '这段录音无法读取，请重新录。');
     return;
   }
-  cloneStatus('已去掉首尾空白。正在生成百分之数字和固定提示，大约需要几分钟。');
+  cloneStatus('已去掉首尾空白。正在并行生成百分之数字和固定提示，大约一两分钟。');
   let response;
   try {
     response = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'audio/wav' }, body: wav });
