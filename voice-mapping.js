@@ -146,9 +146,18 @@ export function createVoiceMapping() {
         if (!error && sequence.length > MAX_SEQUENCE) error = '组合长度 ' + sequence.length + ' 超过 ' + MAX_SEQUENCE;
         next.set(eventKey(eventId, value), { eventId, value, sequence, status: error ? 'missing' : 'auto', error });
       };
+      const groupsFor = (prefix, value) => {
+        const percent = '百分之' + numberParts(value).join('');
+        const full = prefix + percent;
+        if (byText.has(full)) return [[full]];
+        if (byText.has(percent) && byText.has(prefix)) return [[prefix], [percent]];
+        const oldPrefix = prefix + '百分之';
+        if (byText.has(oldPrefix)) return [[oldPrefix], numberParts(value)];
+        return [[full]];
+      };
       for (let value = 0; value <= 100; value++) {
-        add(EVENT_BATTERY_REMAINING, value, [['当前电量为百分之'], numberParts(value)]);
-        add(EVENT_CHARGING_PROGRESS, value, [['电量已充至百分之'], numberParts(value)]);
+        add(EVENT_BATTERY_REMAINING, value, groupsFor('当前电量为', value));
+        add(EVENT_CHARGING_PROGRESS, value, groupsFor('电量已充至', value));
       }
       for (const [eventId, text] of FIXED_EVENTS) add(eventId, -1, [[text]]);
       for (const [key, sequence] of manual) {
