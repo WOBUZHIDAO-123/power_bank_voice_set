@@ -372,19 +372,24 @@ function tone(context, frequency, start, duration, peak = 0.22, type = 'triangle
 function playStartChime() {
   const context = new AudioContext();
   const now = context.currentTime;
-  tone(context, 1568, now, 0.14, 0.2, 'triangle');
-  tone(context, 3136, now, 0.1, 0.08, 'sine');
-  tone(context, 2093, now + 0.13, 0.14, 0.22, 'triangle');
-  tone(context, 4186, now + 0.13, 0.1, 0.07, 'sine');
-  const last = tone(context, 2637, now + 0.26, 0.32, 0.24, 'triangle');
-  tone(context, 5274, now + 0.26, 0.18, 0.06, 'sine');
+  const notes = [
+    [880, 0, 0.22, 0.9, 'square'],
+    [1175, 0.28, 0.22, 0.9, 'square'],
+    [1568, 0.56, 0.38, 0.95, 'square'],
+  ];
+  let last = null;
+  for (const [frequency, offset, duration, peak, type] of notes) {
+    last = tone(context, frequency, now + offset, duration, peak, type);
+    tone(context, frequency * 2, now + offset, duration * 0.7, peak * 0.45, 'sine');
+  }
   return new Promise(resolve => { last.onended = () => { context.close(); resolve(); }; });
 }
 async function startCloneRecording() {
   if (busy || connecting || cloneRecording) return;
   if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) { cloneStatus('录音需要 HTTPS 或 localhost，以及支持麦克风的浏览器。'); return; }
   cloneCue = true; render();
-  cloneStatus('在听到提示音后开始录音');
+  $('clone-status').textContent = '';
+  window.speechSynthesis?.cancel();
   let stream;
   try { stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false }); }
   catch { cloneCue = false; render(); cloneStatus('无法使用麦克风。'); return; }
