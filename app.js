@@ -1,5 +1,6 @@
 import { createRowRecording } from './row-recording.js';
 import { packageFromClips } from './clone-flow.js';
+import { createCloneCapture } from './clone-capture.js';
 import { decodeRecording, encodeWav, waveformBounds } from './silence-trim.js';
 import { SerialLink, Burner } from './protocol.js';
 import { loadCatalog, readHistory, saveHistory } from './resources.js';
@@ -181,9 +182,10 @@ function render() {
   $('connect').disabled = controlsBusy || connecting || !supported;
   $('connect').textContent = connecting ? '正在连接…' : link && !link.closed ? '重新连接' : '连接设备';
   $('local-package').disabled = controlsBusy || connecting;
-  $('clone-record').disabled = controlsBusy || cloneRecording || cloneCue;
-  $('clone-stop').disabled = !cloneRecording;
-  $('clone-file').disabled = controlsBusy || cloneRecording || cloneCue;
+  const cloneBusy = cloneCapture.phase() !== 'idle' || cloneSubmitting;
+  $('clone-record').disabled = controlsBusy || cloneBusy;
+  $('clone-stop').disabled = cloneCapture.phase() === 'idle';
+  $('clone-file').disabled = controlsBusy || cloneBusy;
   $('start').textContent = prepared?.audioOnly ? '开始音频试烧' : '开始烧录';
   $('start').disabled = controlsBusy || connecting || rowRecordingBusy || !prepared || !link || link.closed;
   for (const id of ['voice-event','voice-value','voice-ids','voice-play','voice-queue','voice-stop','voice-sleep','voice-wake']) {
@@ -309,13 +311,12 @@ async function loadPackageBytes(bytes, name, languageTag, announceReady = true) 
     throw error;
   } finally { busy = false; operation = null; render(); }
 }
-let cloneRecording = false, cloneSession = null, cloneTimer = null, cloneCue = false;
+let cloneSubmitting = false;
 function formatPackageSize(bytes) {
   if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
   return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
 }
 function cloneStatus(message) { $('clone-status').textContent = message; if (message) announce(message); }
-function stopCloneClock() { if (cloneTimer !== null) window.clearInterval(cloneTimer); cloneTimer = null; }
 async function generatedPackage(bytes) {
   const archive = await unzip(bytes);
   if (archive.has('voice.json')) return bytes;
@@ -329,13 +330,16 @@ async function submitCloneRecording(blob) {
   cloneStatus('正在去掉首尾空白。');
   let wav;
   try {
-    const decoded = await decodeRecording(blob);
+    const decoded = await decodeRecording(blob, { maxSeconds: 30 });
     const { start, end } = waveformBounds(decoded.channels, decoded.sampleRate);
     const seconds = (end - start) / decoded.sampleRate;
     if (seconds < 5) { cloneStatus('去掉空白后不足 5 秒，请重新录一段更长的话。'); return; }
     wav = new Blob([encodeWav(decoded.channels, decoded.sampleRate, start, end)], { type: 'audio/wav' });
   } catch (error) {
-    cloneStatus(String(error?.message || '').includes('没有检测到有效声音') ? '没有检测到有效声音，请重新录。' : '这段录音无法读取，请重新录。');
+    const message = String(error?.message || '');
+    if (message.includes('没有检测到有效声音')) cloneStatus('没有检测到有效声音，请重新录。');
+    else if (message.includes('音频超过')) cloneStatus(message);
+    else cloneStatus('这段录音无法读取，请重新录。');
     return;
   }
   cloneStatus('已去掉首尾空白。正在并行生成百分之数字和固定提示，遇到限流会自动重试。');
@@ -371,61 +375,70 @@ function tone(context, frequency, start, duration, peak = 0.22, type = 'triangle
 }
 function playStartChime() {
   const context = new AudioContext();
-  const now = context.currentTime;
-  const notes = [
-    [880, 0, 0.22, 0.9, 'square'],
-    [1175, 0.28, 0.22, 0.9, 'square'],
-    [1568, 0.56, 0.38, 0.95, 'square'],
-  ];
-  let last = null;
-  for (const [frequency, offset, duration, peak, type] of notes) {
-    last = tone(context, frequency, now + offset, duration, peak, type);
-    tone(context, frequency * 2, now + offset, duration * 0.7, peak * 0.45, 'sine');
-  }
-  return new Promise(resolve => { last.onended = () => { context.close(); resolve(); }; });
+  let settled = false;
+  let finish;
+  const done = new Promise((resolve, reject) => {
+    finish = error => {
+      if (settled) return;
+      settled = true;
+      context.close().catch(() => {});
+      if (error) reject(error); else resolve();
+    };
+  });
+  (async () => {
+    try {
+      if (context.state === 'suspended') await context.resume();
+      const now = context.currentTime;
+      const notes = [
+        [880, 0, 0.22, 0.9, 'square'],
+        [1175, 0.28, 0.22, 0.9, 'square'],
+        [1568, 0.56, 0.38, 0.95, 'square'],
+      ];
+      let last = null;
+      for (const [frequency, offset, duration, peak, type] of notes) {
+        last = tone(context, frequency, now + offset, duration, peak, type);
+        tone(context, frequency * 2, now + offset, duration * 0.7, peak * 0.45, 'sine');
+      }
+      last.onended = () => finish();
+    } catch (error) { finish(error); }
+  })();
+  return { done, stop: () => finish(new Error('cancelled')) };
 }
-async function startCloneRecording() {
-  if (busy || connecting || cloneRecording) return;
-  if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) { cloneStatus('录音需要 HTTPS 或 localhost，以及支持麦克风的浏览器。'); return; }
-  cloneCue = true; render();
-  $('clone-status').textContent = '';
-  window.speechSynthesis?.cancel();
-  let stream;
-  try { stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false }); }
-  catch { cloneCue = false; render(); cloneStatus('无法使用麦克风。'); return; }
-  try { await playStartChime(); }
-  finally { cloneCue = false; render(); }
-  if (busy || connecting || cloneRecording) { stream.getTracks().forEach(track => track.stop()); return; }
-  const mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4'].find(type => MediaRecorder.isTypeSupported(type));
-  const recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
-  const chunks = [];
-  cloneSession = { recorder, stream }; cloneRecording = true; render();
-  const began = Date.now();
-  $('clone-time').textContent = '0 秒';
-  cloneTimer = window.setInterval(() => { $('clone-time').textContent = Math.floor((Date.now() - began) / 1000) + ' 秒'; }, 200);
-  recorder.ondataavailable = event => { if (event.data.size) chunks.push(event.data); };
-  recorder.onstop = () => {
-    stopCloneClock();
-    stream.getTracks().forEach(track => track.stop());
-    cloneRecording = false; cloneSession = null; render();
-    const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
-    if (!blob.size) { cloneStatus('录音为空，请重试。'); return; }
-    submitCloneRecording(blob);
-  };
-  recorder.start(250);
-  window.setTimeout(() => { if (cloneSession?.recorder === recorder && recorder.state === 'recording') recorder.stop(); }, 20000);
-  $('clone-stop').focus?.();
+const cloneCapture = createCloneCapture({
+  getUserMedia: () => navigator.mediaDevices.getUserMedia({ audio: true, video: false }),
+  MediaRecorder: window.MediaRecorder,
+  playChime: playStartChime,
+  report: cloneStatus,
+  onTick: seconds => { $('clone-time').textContent = seconds + ' 秒'; },
+  onPhase: phase => { render(); if (phase === 'recording') $('clone-stop').focus?.(); },
+  onBlob: blob => { acceptClone(blob); },
+  setInterval: (fn, ms) => window.setInterval(fn, ms),
+  clearInterval: id => window.clearInterval(id),
+  setTimeout: (fn, ms) => window.setTimeout(fn, ms),
+  clearTimeout: id => window.clearTimeout(id)
+});
+function acceptClone(blob) {
+  if (cloneSubmitting) return;
+  cloneSubmitting = true;
+  render();
+  submitCloneRecording(blob).finally(() => { cloneSubmitting = false; render(); });
 }
 $('clone-file').addEventListener('change', () => {
   const file = $('clone-file').files?.[0];
   $('clone-file').value = '';
-  if (!file || busy || connecting || cloneRecording) return;
+  if (!file || busy || connecting || cloneCapture.phase() !== 'idle' || cloneSubmitting) return;
   if (!/\.(wav|mp3|m4a)$/i.test(file.name)) { cloneStatus('请上传 wav、mp3 或 m4a。'); return; }
   if (!file.size || file.size > 10 * 1024 * 1024) { cloneStatus('音频必须非空且不超过 10 MB。'); return; }
-  submitCloneRecording(file);
+  acceptClone(file);
 });
-$('clone-record').addEventListener('click', () => { startCloneRecording(); });
-$('clone-stop').addEventListener('click', () => { if (cloneSession?.recorder?.state === 'recording') cloneSession.recorder.stop(); });
+$('clone-record').addEventListener('click', () => {
+  if (busy || connecting || cloneSubmitting) return;
+  if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) { cloneStatus('录音需要 HTTPS 或 localhost，以及支持麦克风的浏览器。'); return; }
+  $('clone-status').textContent = '';
+  window.speechSynthesis?.cancel();
+  cloneCapture.start();
+});
+$('clone-stop').addEventListener('click', () => { cloneCapture.stop(); });
 $('local-package').addEventListener('change', async () => {
   if (busy || connecting) return;
   const file = $('local-package').files?.[0];
@@ -552,8 +565,9 @@ for (const [id, action] of [['voice-stop',0],['voice-sleep',1],['voice-wake',2]]
 }
 
 window.addEventListener('beforeunload', event => {
-  if (busy) { event.preventDefault(); event.returnValue = ''; }
+  if (busy || cloneCapture.phase() !== 'idle') { event.preventDefault(); event.returnValue = ''; }
 });
+window.addEventListener('pagehide', () => { cloneCapture.leave(); });
 async function init() {
   render();
   if (!window.isSecureContext) $('support').textContent = '此 HTTP 地址不能使用串口。请打开 HTTPS 网址，或在本机通过 localhost 运行。';

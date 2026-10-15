@@ -54,10 +54,16 @@ function writeAscii(view, offset, text) {
   for (let index = 0; index < text.length; index++) view.setUint8(offset + index, text.charCodeAt(index));
 }
 
-export async function decodeRecording(blob) {
+export function checkRecordingDuration(seconds, maxSeconds) {
+  if (!Number.isFinite(seconds) || seconds <= 0) throw new Error('这段录音无法读取，请重新录。');
+  if (seconds > maxSeconds) throw new Error('音频超过 ' + maxSeconds + ' 秒，请换一段更短的。');
+}
+
+export async function decodeRecording(blob, { maxSeconds } = {}) {
   const context = new AudioContext();
   try {
     const audio = await context.decodeAudioData(await blob.arrayBuffer());
+    if (maxSeconds != null) checkRecordingDuration(audio.duration, maxSeconds);
     const channels = [];
     for (let index = 0; index < audio.numberOfChannels; index++) channels.push(new Float32Array(audio.getChannelData(index)));
     return { channels, sampleRate: audio.sampleRate };
