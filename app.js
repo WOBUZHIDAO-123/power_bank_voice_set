@@ -158,7 +158,7 @@ const chosen = () => localItem;
 function readingStops() {
   if (typeof document.querySelectorAll !== 'function') return;
   for (const el of document.querySelectorAll('#page-start, main h1, main h2, main p, main li, #connection, #stage, #percent, footer')) {
-    if (el.closest('summary, button, a, label, select')) continue;
+    if (el.closest('summary, button, a, label, select, .sr-only')) continue;
     if (!el.textContent.trim()) {
       if (el.getAttribute('tabindex') === '0') el.removeAttribute('tabindex');
       continue;
@@ -355,48 +355,42 @@ async function submitCloneRecording(blob) {
     cloneStatus('语音包已生成，大小 ' + size + '。可以试听，连接设备后可以烧录。');
   } catch (error) { cloneStatus(error.message || '语音包生成失败。'); }
 }
-function beep(frequency) {
-  const context = new AudioContext();
+function tone(context, frequency, start, duration, peak = 0.22, type = 'triangle') {
   const oscillator = context.createOscillator();
   const gain = context.createGain();
+  oscillator.type = type;
   oscillator.frequency.value = frequency;
   oscillator.connect(gain);
   gain.connect(context.destination);
-  const now = context.currentTime;
-  gain.gain.setValueAtTime(0.0001, now);
-  gain.gain.exponentialRampToValueAtTime(0.18, now + 0.02);
-  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.28);
-  oscillator.start(now);
-  oscillator.stop(now + 0.3);
-  return new Promise(resolve => { oscillator.onended = () => { context.close(); resolve(); }; });
+  gain.gain.setValueAtTime(0.0001, start);
+  gain.gain.exponentialRampToValueAtTime(peak, start + 0.012);
+  gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+  oscillator.start(start);
+  oscillator.stop(start + duration + 0.02);
+  return oscillator;
 }
-function playCue(text, frequency) {
-  if (!window.speechSynthesis) return beep(frequency);
-  return new Promise(resolve => {
-    let settled = false;
-    const finish = spoken => { if (settled) return; settled = true; if (spoken) resolve(); else beep(frequency).then(resolve); };
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = 'zh-CN';
-    utterance.rate = 1.05;
-    utterance.onend = () => finish(true);
-    utterance.onerror = () => finish(false);
-    window.speechSynthesis.cancel();
-    window.speechSynthesis.speak(utterance);
-    window.setTimeout(() => { window.speechSynthesis.cancel(); finish(false); }, 4000);
-  });
+function playStartChime() {
+  const context = new AudioContext();
+  const now = context.currentTime;
+  tone(context, 1568, now, 0.14, 0.2, 'triangle');
+  tone(context, 3136, now, 0.1, 0.08, 'sine');
+  tone(context, 2093, now + 0.13, 0.14, 0.22, 'triangle');
+  tone(context, 4186, now + 0.13, 0.1, 0.07, 'sine');
+  const last = tone(context, 2637, now + 0.26, 0.32, 0.24, 'triangle');
+  tone(context, 5274, now + 0.26, 0.18, 0.06, 'sine');
+  return new Promise(resolve => { last.onended = () => { context.close(); resolve(); }; });
 }
 async function startCloneRecording() {
   if (busy || connecting || cloneRecording) return;
   if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) { cloneStatus('录音需要 HTTPS 或 localhost，以及支持麦克风的浏览器。'); return; }
   cloneCue = true; render();
-  cloneStatus('请听提示音，随后开始录音。');
-  try { await playCue('开始录音', 880); }
-  finally { cloneCue = false; render(); }
-  if (busy || connecting || cloneRecording) return;
-  cloneStatus('请允许麦克风访问。');
+  cloneStatus('在听到提示音后开始录音');
   let stream;
   try { stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false }); }
-  catch { cloneStatus('无法使用麦克风。'); return; }
+  catch { cloneCue = false; render(); cloneStatus('无法使用麦克风。'); return; }
+  try { await playStartChime(); }
+  finally { cloneCue = false; render(); }
+  if (busy || connecting || cloneRecording) { stream.getTracks().forEach(track => track.stop()); return; }
   const mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4'].find(type => MediaRecorder.isTypeSupported(type));
   const recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
   const chunks = [];
@@ -410,16 +404,11 @@ async function startCloneRecording() {
     stream.getTracks().forEach(track => track.stop());
     cloneRecording = false; cloneSession = null; render();
     const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
-    cloneCue = true; render();
-    playCue('录音结束', 520).finally(() => {
-      cloneCue = false; render();
-      if (!blob.size) { cloneStatus('录音为空，请重试。'); return; }
-      submitCloneRecording(blob);
-    });
+    if (!blob.size) { cloneStatus('录音为空，请重试。'); return; }
+    submitCloneRecording(blob);
   };
   recorder.start(250);
   window.setTimeout(() => { if (cloneSession?.recorder === recorder && recorder.state === 'recording') recorder.stop(); }, 20000);
-  cloneStatus('正在录音。说满约 20 秒，或点击停止并生成。');
   $('clone-stop').focus?.();
 }
 $('clone-file').addEventListener('change', () => {
