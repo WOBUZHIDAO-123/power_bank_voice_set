@@ -148,7 +148,6 @@ function render() {
   $('clone-record').disabled = controlsBusy || cloneRecording || cloneCue;
   $('clone-stop').disabled = !cloneRecording;
   $('clone-file').disabled = controlsBusy || cloneRecording || cloneCue;
-  $('clone-endpoint').disabled = controlsBusy || cloneRecording || cloneCue;
   $('start').textContent = prepared?.audioOnly ? '开始音频试烧' : '开始烧录';
   $('start').disabled = controlsBusy || connecting || rowRecordingBusy || !prepared || !link || link.closed;
   for (const id of ['voice-event','voice-value','voice-ids','voice-play','voice-queue','voice-stop','voice-sleep','voice-wake']) {
@@ -287,9 +286,7 @@ async function generatedPackage(bytes) {
   return packageFromClips(files);
 }
 async function submitCloneRecording(blob) {
-  const endpoint = $('clone-endpoint').value.trim();
-  try { localStorageSafe()?.setItem('clone-endpoint', endpoint); } catch { /* The address is still used for this request. */ }
-  if (!endpoint) { cloneStatus('请填写复刻服务地址。'); return; }
+  const endpoint = 'http://192.168.3.153:8766/clone';
   cloneStatus('正在去掉首尾空白。');
   let wav;
   try {
@@ -302,10 +299,12 @@ async function submitCloneRecording(blob) {
     cloneStatus(String(error?.message || '').includes('没有检测到有效声音') ? '没有检测到有效声音，请重新录。' : '这段录音无法读取，请重新录。');
     return;
   }
-  cloneStatus('已去掉首尾空白。正在并行生成百分之数字和固定提示，大约一两分钟。');
+  cloneStatus('已去掉首尾空白。正在并行生成百分之数字和固定提示，遇到限流会自动重试。');
   let response;
+  const url = new URL(endpoint, window.location.href);
+  url.searchParams.set('scheme', 'percent');
   try {
-    response = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'audio/wav' }, body: wav });
+    response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'audio/wav' }, body: wav });
   } catch { cloneStatus('无法连接复刻服务。'); return; }
   if (!response.ok) { cloneStatus(await response.text()); return; }
   try {
@@ -518,8 +517,6 @@ window.addEventListener('beforeunload', event => {
   if (busy) { event.preventDefault(); event.returnValue = ''; }
 });
 async function init() {
-  const savedEndpoint = localStorageSafe()?.getItem('clone-endpoint');
-  if (savedEndpoint) $('clone-endpoint').value = savedEndpoint;
   render();
   if (!window.isSecureContext) $('support').textContent = '此 HTTP 地址不能使用串口。请打开 HTTPS 网址，或在本机通过 localhost 运行。';
   else if (!('serial' in navigator)) $('support').textContent = '当前浏览器不支持设备连接，请使用 Windows 电脑版 Chrome。';
