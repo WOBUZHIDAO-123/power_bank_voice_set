@@ -157,7 +157,7 @@ const chosen = () => localItem;
 
 function readingStops() {
   if (typeof document.querySelectorAll !== 'function') return;
-  for (const el of document.querySelectorAll('main h1, main h2, main p, main li, #connection, #stage, #percent, footer')) {
+  for (const el of document.querySelectorAll('#page-start, main h1, main h2, main p, main li, #connection, #stage, #percent, footer')) {
     if (el.closest('summary, button, a, label, select')) continue;
     if (!el.textContent.trim()) {
       if (el.getAttribute('tabindex') === '0') el.removeAttribute('tabindex');
@@ -168,7 +168,7 @@ function readingStops() {
 }
 function placeInitialFocus() {
   if (typeof document.querySelector !== 'function') return;
-  const start = document.querySelector('main h1');
+  const start = $('page-start');
   if (!start) return;
   start.tabIndex = 0;
   start.focus();
