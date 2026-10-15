@@ -12,9 +12,9 @@ const FIXED_EVENTS = [
   [0x0105, '停止放电', 'STOP_DISCHARGING'],
   [0x0102, '电量已满', 'BATTERY_FULL'],
   [0x0103, '电量不足', 'LOW_BATTERY'],
-  [0x0106, '切换为盲文模式', 'MODE_BRAILLE'],
-  [0x0107, '切换为语音模式', 'MODE_VOICE'],
-  [0x0108, '切换为盲文和语音模式', 'MODE_BRAILLE_AND_VOICE']
+  [0x0106, '已切换到盲文语音双模式', 'MODE_VOICE_BRAILLE', ['切换为盲文和语音模式']],
+  [0x0107, '已切换到语音模式', 'MODE_VOICE_ONLY', ['切换为语音模式']],
+  [0x0108, '已切换到盲文模式', 'MODE_BRAILLE_ONLY', ['切换为盲文模式']]
 ];
 const EVENT_NAMES = {
   [EVENT_BATTERY_REMAINING]: 'BATTERY_REMAINING',
@@ -231,7 +231,10 @@ export function createVoiceMapping() {
         add(EVENT_BATTERY_REMAINING, value, groupsFor('当前电量为', value));
         add(EVENT_CHARGING_PROGRESS, value, groupsFor('电量已充至', value));
       }
-      for (const [eventId, text] of FIXED_EVENTS) add(eventId, -1, [[text]]);
+      for (const [eventId, text, , aliases = []] of FIXED_EVENTS) {
+        const spoken = [text, ...aliases].find(item => byText.has(item)) || text;
+        add(eventId, -1, [[spoken]]);
+      }
       for (const [key, sequence] of manual) {
         if (!next.has(key)) continue;
         const [eventId, value] = key.split(':').map(Number);
