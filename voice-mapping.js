@@ -25,6 +25,25 @@ const DEFAULT_TEXT_ORDER = ['当前电量为百分之', '电量已充至百分�
 const PREFIX_RE = /^(\d{3})(.*)$/;
 const STATUS_LABEL = { auto: '自动', manual: '手动', missing: '缺失' };
 
+export function mpegAudioPayload(bytes) {
+  if (bytes.length >= 10 && bytes[0] === 0x49 && bytes[1] === 0x44 && bytes[2] === 0x33) {
+    const size = ((bytes[6] & 0x7f) << 21) | ((bytes[7] & 0x7f) << 14) | ((bytes[8] & 0x7f) << 7) | (bytes[9] & 0x7f);
+    const start = 10 + size;
+    if (start <= bytes.length) return bytes.subarray(start);
+  }
+  return bytes;
+}
+
+export function concatMp3(parts) {
+  if (!parts.length) throw new Error('没有可拼接的音频');
+  if (parts.length === 1) return parts[0];
+  const chunks = [parts[0], ...parts.slice(1).map(mpegAudioPayload)];
+  const output = new Uint8Array(chunks.reduce((total, chunk) => total + chunk.length, 0));
+  let offset = 0;
+  for (const chunk of chunks) { output.set(chunk, offset); offset += chunk.length; }
+  return output;
+}
+
 export function numberParts(value) {
   if (!Number.isInteger(value) || value < 0 || value > 100) throw new Error('数字超出 0～100');
   const digits = ['零', '一', '二', '三', '四', '五', '六', '七', '八', '九'];
@@ -133,6 +152,29 @@ export function createVoiceMapping() {
       });
       manual.clear();
       indexClips(clips);
+    },
+    flattenToFullSentences() {
+      this.autoGenerate();
+      const assigned = [];
+      const seen = new Map();
+      for (const [eventId, value] of allEventKeys()) {
+        const event = events.get(eventKey(eventId, value));
+        if (!event || event.status === 'missing' || !event.sequence.length) continue;
+        const text = event.sequence.map(fileId => byId.get(fileId).text).join('');
+        if (seen.has(text)) continue;
+        if (assigned.length >= MAX_FILE_ID) throw new Error('完整句音频超过 255 个');
+        const fileId = assigned.length + 1;
+        seen.set(text, fileId);
+        assigned.push({
+          fileId,
+          text,
+          bytes: concatMp3(event.sequence.map(fileId => byId.get(fileId).bytes)),
+          name: String(fileId).padStart(3, '0') + text + '.mp3'
+        });
+      }
+      if (!assigned.length) throw new Error('没有可拼成完整句的映射');
+      this.loadAssigned(assigned);
+      this.autoGenerate();
     },
     autoGenerate() {
       if (!clips.length) throw new Error('请先加载音频');
