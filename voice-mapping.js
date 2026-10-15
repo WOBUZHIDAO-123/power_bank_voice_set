@@ -11,7 +11,10 @@ const FIXED_EVENTS = [
   [0x0101, '开始放电', 'START_DISCHARGING'],
   [0x0105, '停止放电', 'STOP_DISCHARGING'],
   [0x0102, '电量已满', 'BATTERY_FULL'],
-  [0x0103, '电量不足', 'LOW_BATTERY']
+  [0x0103, '电量不足', 'LOW_BATTERY'],
+  [0x0106, '切换为盲文模式', 'MODE_BRAILLE'],
+  [0x0107, '切换为语音模式', 'MODE_VOICE'],
+  [0x0108, '切换为盲文和语音模式', 'MODE_BRAILLE_AND_VOICE']
 ];
 const EVENT_NAMES = {
   [EVENT_BATTERY_REMAINING]: 'BATTERY_REMAINING',
@@ -147,11 +150,13 @@ export function createVoiceMapping() {
         next.set(eventKey(eventId, value), { eventId, value, sequence, status: error ? 'missing' : 'auto', error });
       };
       const groupsFor = (prefix, value) => {
-        const percent = '百分之' + numberParts(value).join('');
+        const spoken = numberParts(value).join('');
+        const percent = '百分之' + spoken;
         const full = prefix + percent;
         if (byText.has(full)) return [[full]];
         if (byText.has(percent) && byText.has(prefix)) return [[prefix], [percent]];
         const oldPrefix = prefix + '百分之';
+        if (byText.has(oldPrefix) && byText.has(spoken)) return [[oldPrefix], [spoken]];
         if (byText.has(oldPrefix)) return [[oldPrefix], numberParts(value)];
         return [[full]];
       };

@@ -5,7 +5,9 @@ import { validateTable, readTableLanguage } from './voice-table.js';
 import { validateImage } from './protocol.js';
 
 export const EVENTS = { BATTERY_REMAINING: 1, CHARGING_PROGRESS: 2, START_CHARGING: 256,
-  START_DISCHARGING: 257, BATTERY_FULL: 258, LOW_BATTERY: 259, STOP_CHARGING: 260, STOP_DISCHARGING: 261 };
+  START_DISCHARGING: 257, BATTERY_FULL: 258, LOW_BATTERY: 259, STOP_CHARGING: 260, STOP_DISCHARGING: 261,
+  MODE_BRAILLE: 262, MODE_VOICE: 263, MODE_BRAILLE_AND_VOICE: 264 };
+const COMPLETE_ENTRIES = 211;
 
 function audioType(path, bytes) {
   const extension = path.split('.').at(-1).toLowerCase();
@@ -127,7 +129,7 @@ export async function compilePackage(zipBytes, expectedLanguage, { signal, onPro
     };
   }
   if (!manifest || manifest.formatVersion !== 1 || !Array.isArray(manifest.files) ||
-      !manifest.files.length || manifest.files.length > 255 || !Array.isArray(manifest.entries) || !manifest.entries.length || (!manifest.modern && manifest.entries.length !== 208)) {
+      !manifest.files.length || manifest.files.length > 255 || !Array.isArray(manifest.entries) || !manifest.entries.length || (!manifest.modern && manifest.entries.length !== 208 && manifest.entries.length !== COMPLETE_ENTRIES)) {
     throw new Error('voice.json 需包含版本 1、1～255 个音频和至少 1 条有效事件映射');
   }
   const tag = languageTag(manifest.languageTag);
@@ -179,14 +181,14 @@ export async function compilePackage(zipBytes, expectedLanguage, { signal, onPro
   const table = buildVoiceTable(entries, tag, crc32(image));
   checkCancelled(signal);
   return { image, table, languageTag: tag, fileCount: files.length, entryCount: entries.length,
-    partial: manifest.modern && entries.length !== 208,
+    partial: manifest.modern && entries.length !== COMPLETE_ENTRIES,
     editable: { files, entries, modern: manifest.modern },
     preview: preview.slice(), previewType: previewType === 'mp3' ? 'audio/mpeg' : 'audio/wav' };
 }
 
 export function replacePrompt(bundle, eventId, bytes, filename) {
   if (!bundle.editable || bundle.audioOnly) throw new Error('请加载完整的 voice.json＋原始音频语音包');
-  if (![256, 257, 258, 259, 260, 261].includes(eventId)) throw new Error('仅支持六种固定提示');
+  if (![256, 257, 258, 259, 260, 261, 262, 263, 264].includes(eventId)) throw new Error('仅支持固定提示');
   if (!(bytes instanceof Uint8Array) || !bytes.length || bytes.length > 4 * 1024 * 1024) throw new Error('录音必须非空且不超过 4 MiB');
   const extension = audioType(filename, bytes);
   const { files, entries } = bundle.editable;
