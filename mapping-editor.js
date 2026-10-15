@@ -1,5 +1,8 @@
 import { allEventKeys, createVoiceMapping } from './voice-mapping.js';
 import { compilePackage } from './voice-package.js';
+import { MAX_ZIP_SIZE } from './zip.js';
+
+const MAX_MAPPING_JSON = 256 * 1024;
 
 const download = (filename, bytes, type) => {
   const link = document.createElement('a');
@@ -13,8 +16,15 @@ export function mountMappingEditor({ document, getPrepared, usePackage, stopAudi
   const $ = id => document.getElementById(id);
   const mapping = createVoiceMapping();
   const player = document.createElement('audio');
-  let filter = '全部';
-  const status = message => { $('mapping-status').textContent = message; };
+  let filter = '全部', playToken = 0, finishPreview = () => {};
+  const status = message => {
+    $('mapping-status').textContent = message;
+    const live = $('announcer');
+    if (live && message) {
+      live.textContent = '';
+      globalThis.setTimeout(() => { live.textContent = message; }, 30);
+    }
+  };
   const setLanguage = tag => {
     const select = $('mapping-language');
     const value = tag || 'zh-CN';
@@ -39,6 +49,7 @@ export function mountMappingEditor({ document, getPrepared, usePackage, stopAudi
       row.type = 'button';
       row.className = 'mapping-clip';
       row.textContent = String(clip.fileId).padStart(3, '0') + '  ' + clip.text;
+      row.setAttribute('aria-label', '试听 ' + String(clip.fileId).padStart(3, '0') + ' ' + clip.text);
       row.addEventListener('click', () => playIds([clip.fileId]));
       clipList.append(row);
     }
@@ -59,6 +70,8 @@ export function mountMappingEditor({ document, getPrepared, usePackage, stopAudi
       const state = document.createElement('span'); state.textContent = mapping.statusLabel(event.status);
       const sequence = document.createElement('span'); sequence.textContent = mapping.sequenceText(event);
       row.append(id, number, name, state, sequence);
+      row.setAttribute('aria-haspopup', 'dialog');
+      row.setAttribute('aria-label', mapping.eventName(eventId) + '，数值 ' + value + '，' + mapping.statusLabel(event.status) + '。' + mapping.sequenceText(event));
       row.addEventListener('click', () => openEditor(event));
       events.append(row);
     }
@@ -67,8 +80,12 @@ export function mountMappingEditor({ document, getPrepared, usePackage, stopAudi
   };
 
   const playIds = async ids => {
+    const token = ++playToken;
+    finishPreview();
     stopAudio();
+    player.pause();
     for (const fileId of ids) {
+      if (token !== playToken) return;
       const clip = mapping.clip(fileId);
       if (!clip) return;
       const url = URL.createObjectURL(new Blob([clip.bytes], { type: 'audio/mpeg' }));
@@ -76,10 +93,24 @@ export function mountMappingEditor({ document, getPrepared, usePackage, stopAudi
       try {
         await player.play();
         await new Promise((resolve, reject) => {
-          player.addEventListener('ended', resolve, { once: true });
-          player.addEventListener('error', () => reject(new Error('试听失败')), { once: true });
+          if (token !== playToken) { resolve(); return; }
+          const cleanup = () => {
+            player.removeEventListener('ended', onEnd);
+            player.removeEventListener('error', onError);
+            finishPreview = () => {};
+          };
+          const onEnd = () => { cleanup(); resolve(); };
+          const onError = () => { cleanup(); reject(new Error('试听失败')); };
+          finishPreview = () => { cleanup(); resolve(); };
+          player.addEventListener('ended', onEnd);
+          player.addEventListener('error', onError);
         });
-      } catch { URL.revokeObjectURL(url); status('这组音频暂时无法试听。'); return; }
+      } catch {
+        URL.revokeObjectURL(url);
+        if (token !== playToken) return;
+        status('这组音频暂时无法试听。');
+        return;
+      }
       URL.revokeObjectURL(url);
     }
   };
@@ -142,9 +173,14 @@ export function mountMappingEditor({ document, getPrepared, usePackage, stopAudi
 
   const readAudio = async fileList => {
     const files = [];
+    let total = 0;
     for (const file of fileList) {
       if (!/\.mp3$/i.test(file.name)) continue;
-      files.push({ name: file.webkitRelativePath || file.name, bytes: new Uint8Array(await file.arrayBuffer()) });
+      if (!file.size || file.size > MAX_ZIP_SIZE || total + file.size > MAX_ZIP_SIZE) throw new Error('音频总大小超过 16 MiB');
+      total += file.size;
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      if (bytes.length !== file.size) throw new Error('音频读取不完整，请重新选择。');
+      files.push({ name: file.webkitRelativePath || file.name, bytes });
     }
     mapping.language = $('mapping-language').value.trim() || 'zh-CN';
     mapping.loadFiles(files);
@@ -180,7 +216,11 @@ export function mountMappingEditor({ document, getPrepared, usePackage, stopAudi
     try { mapping.language = $('mapping-language').value.trim() || 'zh-CN'; mapping.autoGenerate(); render(); status('已重新自动组合。手动组合仍保留。'); }
     catch (error) { status(error.message); }
   });
-  $('mapping-filter').addEventListener('change', () => { filter = $('mapping-filter').value; render(); });
+  $('mapping-filter').addEventListener('change', () => {
+    filter = $('mapping-filter').value;
+    render();
+    status($('mapping-summary').textContent || '没有符合条件的提示。');
+  });
   $('mapping-save').addEventListener('click', () => {
     if (!mapping.clips.length) { status('请先加载音频。'); return; }
     mapping.language = $('mapping-language').value.trim() || 'zh-CN';
@@ -192,7 +232,10 @@ export function mountMappingEditor({ document, getPrepared, usePackage, stopAudi
     $('mapping-load').value = '';
     if (!file || guard()) return;
     try {
-      mapping.applyMapping(JSON.parse(await file.text()));
+      if (!file.size || file.size > MAX_MAPPING_JSON) throw new Error('映射文件必须非空且不超过 256 KB');
+      const text = await file.text();
+      if (!text.length || text.length > MAX_MAPPING_JSON) throw new Error('映射文件必须非空且不超过 256 KB');
+      mapping.applyMapping(JSON.parse(text));
       setLanguage(mapping.language);
       render();
       status('映射已加载。');

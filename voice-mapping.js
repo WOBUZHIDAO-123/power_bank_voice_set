@@ -1,5 +1,5 @@
 import { languageTag } from './binary.js';
-import { zipStore } from './zip.js';
+import { MAX_ZIP_SIZE, zipStore } from './zip.js';
 
 export const MAX_FILE_ID = 255;
 export const MAX_SEQUENCE = 8;
@@ -24,6 +24,24 @@ for (const [id, , name] of FIXED_EVENTS) EVENT_NAMES[id] = name;
 const DEFAULT_TEXT_ORDER = ['当前电量为百分之', '电量已充至百分之', '零', '一', '二', '三', '四', '五', '六', '七', '八', '九', '十', '一百', ...FIXED_EVENTS.map(([, text]) => text)];
 const PREFIX_RE = /^(\d{3})(.*)$/;
 const STATUS_LABEL = { auto: '自动', manual: '手动', missing: '缺失' };
+const ILLEGAL_TEXT = /[\\/:\x00-\x1f]/;
+
+function spokenText(text, label) {
+  const spoken = String(text || '').trim();
+  if (!spoken) throw new Error('文件名缺少朗读文本: ' + label);
+  const filename = '000' + spoken + '.mp3';
+  if (ILLEGAL_TEXT.test(spoken) || spoken === '.' || spoken === '..' || filename.length > 240) {
+    throw new Error('朗读文本不能包含路径符号: ' + label);
+  }
+  return spoken;
+}
+
+function fileStem(name) {
+  const parts = String(name || '').split(/[/\\]/);
+  const earlier = parts.slice(0, -1).join('');
+  if (earlier && PREFIX_RE.test(earlier.replace(/\.[^.]+$/, ''))) throw new Error('朗读文本不能包含路径符号: ' + name);
+  return parts.at(-1).replace(/\.[^.]+$/, '');
+}
 
 export function mpegAudioPayload(bytes) {
   if (bytes.length >= 10 && bytes[0] === 0x49 && bytes[1] === 0x44 && bytes[2] === 0x33) {
@@ -89,7 +107,16 @@ export function createVoiceMapping() {
   let language = 'zh-CN';
 
   const indexClips = assigned => {
-    clips.splice(0, clips.length, ...assigned.sort((a, b) => a.fileId - b.fileId));
+    const sorted = [...assigned].sort((a, b) => a.fileId - b.fileId);
+    const seen = new Set();
+    let total = 0;
+    for (const clip of sorted) {
+      if (seen.has(clip.text)) throw new Error('朗读文本重复: ' + clip.text);
+      seen.add(clip.text);
+      total += clip.bytes.length;
+      if (total > MAX_ZIP_SIZE) throw new Error('音频总大小超过 16 MiB');
+    }
+    clips.splice(0, clips.length, ...sorted);
     byId.clear(); byText.clear();
     for (const clip of clips) { byId.set(clip.fileId, clip); byText.set(clip.text, clip); }
     events.clear();
@@ -112,11 +139,10 @@ export function createVoiceMapping() {
     loadFiles(files) {
       const explicit = [], implicit = [];
       for (const file of files) {
-        const stem = file.name.replace(/\.[^.]+$/, '').split(/[/\\]/).at(-1);
+        const stem = fileStem(file.name);
         const match = PREFIX_RE.exec(stem);
         const prefixed = match && Number(match[1]) >= 1 && Number(match[1]) <= MAX_FILE_ID;
-        const text = (prefixed ? match[2] : stem).replace(/^[-_.\s]+/, '').trim();
-        if (!text) throw new Error('文件名缺少朗读文本: ' + file.name);
+        const text = spokenText((prefixed ? match[2] : stem).replace(/^[-_.\s]+/, ''), file.name);
         if (!(file.bytes instanceof Uint8Array) || !file.bytes.length) throw new Error('音频文件为空: ' + file.name);
         if (prefixed) explicit.push({ name: file.name.split(/[/\\]/).at(-1), bytes: file.bytes, fileId: Number(match[1]), text });
         else implicit.push({ name: file.name.split(/[/\\]/).at(-1), bytes: file.bytes, text });
@@ -136,8 +162,8 @@ export function createVoiceMapping() {
         assigned.push({ ...file, fileId: nextId });
         nextId++;
       }
-      manual.clear();
       indexClips(assigned);
+      manual.clear();
     },
     loadAssigned(assigned) {
       if (!assigned.length || assigned.length > MAX_FILE_ID) throw new Error('音频文件数量必须为 1～255');
@@ -145,13 +171,12 @@ export function createVoiceMapping() {
       const clips = assigned.map(file => {
         if (!Number.isInteger(file.fileId) || file.fileId < 1 || file.fileId > MAX_FILE_ID || used.has(file.fileId)) throw new Error('音频编号必须为不重复的 1～255');
         used.add(file.fileId);
-        const text = String(file.text || '').trim();
-        if (!text) throw new Error('音频缺少朗读文本');
+        const text = spokenText(file.text, file.name || file.text);
         if (!(file.bytes instanceof Uint8Array) || !file.bytes.length) throw new Error('音频文件为空');
         return { fileId: file.fileId, text, bytes: file.bytes, name: file.name || String(file.fileId).padStart(3, '0') + text + '.mp3' };
       });
-      manual.clear();
       indexClips(clips);
+      manual.clear();
     },
     flattenToFullSentences() {
       this.autoGenerate();

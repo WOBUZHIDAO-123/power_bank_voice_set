@@ -184,7 +184,7 @@ function render() {
   $('local-package').disabled = controlsBusy || connecting;
   const cloneBusy = cloneCapture.phase() !== 'idle' || cloneSubmitting;
   $('clone-record').disabled = controlsBusy || cloneBusy;
-  $('clone-stop').disabled = cloneCapture.phase() === 'idle';
+  $('clone-stop').disabled = !['cue', 'recording'].includes(cloneCapture.phase());
   $('clone-file').disabled = controlsBusy || cloneBusy;
   $('start').textContent = prepared?.audioOnly ? '开始音频试烧' : '开始烧录';
   $('start').disabled = controlsBusy || connecting || rowRecordingBusy || !prepared || !link || link.closed;
@@ -373,7 +373,7 @@ function tone(context, frequency, start, duration, peak = 0.22, type = 'triangle
   oscillator.stop(start + duration + 0.02);
   return oscillator;
 }
-function playStartChime() {
+function playChime(notes) {
   const context = new AudioContext();
   let settled = false;
   let finish;
@@ -389,11 +389,6 @@ function playStartChime() {
     try {
       if (context.state === 'suspended') await context.resume();
       const now = context.currentTime;
-      const notes = [
-        [880, 0, 0.22, 0.9, 'square'],
-        [1175, 0.28, 0.22, 0.9, 'square'],
-        [1568, 0.56, 0.38, 0.95, 'square'],
-      ];
       let last = null;
       for (const [frequency, offset, duration, peak, type] of notes) {
         last = tone(context, frequency, now + offset, duration, peak, type);
@@ -404,10 +399,24 @@ function playStartChime() {
   })();
   return { done, stop: () => finish(new Error('cancelled')) };
 }
+function playStartChime() {
+  return playChime([
+    [880, 0, 0.22, 0.9, 'square'],
+    [1175, 0.28, 0.22, 0.9, 'square'],
+    [1568, 0.56, 0.38, 0.95, 'square']
+  ]);
+}
+function playEndChime() {
+  return playChime([
+    [784, 0, 0.16, 0.75, 'square'],
+    [523, 0.18, 0.28, 0.8, 'square']
+  ]);
+}
 const cloneCapture = createCloneCapture({
   getUserMedia: () => navigator.mediaDevices.getUserMedia({ audio: true, video: false }),
   MediaRecorder: window.MediaRecorder,
   playChime: playStartChime,
+  playEndChime,
   report: cloneStatus,
   onTick: seconds => { $('clone-time').textContent = seconds + ' 秒'; },
   onPhase: phase => { render(); if (phase === 'recording') $('clone-stop').focus?.(); },

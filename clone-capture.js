@@ -1,6 +1,6 @@
 // Microphone capture for "用我的声音生成". The blob is handed back only after a finished take.
 export function createCloneCapture({
-  getUserMedia, MediaRecorder, playChime, report, onBlob, onTick = () => {}, onPhase = () => {},
+  getUserMedia, MediaRecorder, playChime, playEndChime = null, report, onBlob, onTick = () => {}, onPhase = () => {},
   setInterval, clearInterval, setTimeout, clearTimeout, maxMs = 20000, chimeMs = 3000
 }) {
   let phase = 'idle', generation = 0, session = null, clock = null;
@@ -62,13 +62,28 @@ export function createCloneCapture({
       report('录音失败，请重试。');
       if (recorder.state === 'recording') recorder.stop();
     };
-    recorder.onstop = () => {
+    recorder.onstop = async () => {
       const discarded = token !== generation || session?.discard || session?.failed;
       drop();
-      setPhase('idle');
-      if (discarded) return;
+      if (discarded) { setPhase('idle'); return; }
       const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
-      if (!blob.size) { report('录音为空，请重试。'); return; }
+      if (!blob.size) { setPhase('idle'); report('录音为空，请重试。'); return; }
+      if (playEndChime) {
+        setPhase('ending');
+        const chime = playEndChime();
+        session = { stopChime: chime.stop };
+        let timer;
+        try {
+          await Promise.race([
+            chime.done,
+            new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('timeout')), chimeMs); })
+          ]);
+        } catch { /* A missed ending tone still keeps the recording. */ }
+        finally { clearTimeout(timer); }
+        if (token !== generation) return;
+        session = null;
+      }
+      setPhase('idle');
       onBlob(blob);
     };
     try { recorder.start(250); }
