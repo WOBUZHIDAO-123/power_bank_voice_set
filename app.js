@@ -326,7 +326,7 @@ async function generatedPackage(bytes) {
   return packageFromClips(files);
 }
 async function submitCloneRecording(blob) {
-  const endpoint = 'http://192.168.3.161:8766/clone';
+  const endpoint = (location.port === '8766' ? '' : 'http://192.168.3.161:8766') + '/clone';
   cloneStatus('正在去掉首尾空白。');
   let wav;
   try {
