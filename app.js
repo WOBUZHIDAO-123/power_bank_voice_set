@@ -326,7 +326,7 @@ async function generatedPackage(bytes) {
   return packageFromClips(files);
 }
 async function submitCloneRecording(blob) {
-  const endpoint = 'http://192.168.3.153:8766/clone';
+  const endpoint = 'http://192.168.3.161:8766/clone';
   cloneStatus('正在去掉首尾空白。');
   let wav;
   try {
@@ -478,12 +478,28 @@ $('cancel').addEventListener('click', () => {
 });
 $('connect').addEventListener('click', async () => {
   if (busy || connecting) return;
-  connecting = true; render(); result('');
+  if (!navigator.serial?.requestPort) {
+    result('当前浏览器不能弹出设备选择窗，请用 Windows 电脑版 Chrome 打开本页。', true);
+    return;
+  }
   const diagnostics = [];
   const report = message => { diagnostics.push(message); $('diagnostic').textContent = diagnostics.join(' → '); announce(message); };
+  let port;
+  try {
+    // requestPort must run in the same user click. Do not disable the button or speak first, or Chrome on GitHub Pages will skip the chooser.
+    port = await navigator.serial.requestPort();
+  } catch (error) {
+    if (error.name === 'NotFoundError') {
+      report('未选择设备；如列表为空，请检查 USB 数据线、驱动及设备是否接在本机');
+      return;
+    }
+    report('检查未完成：' + error.message);
+    result('连接失败：' + error.message, true);
+    return;
+  }
+  connecting = true; render(); result('');
   report('浏览器允许串口访问，等待选择设备');
   try {
-    const port = await navigator.serial.requestPort();
     if (link) { await link.close(); link = null; }
     const candidate = new SerialLink(port); link = candidate;
     candidate.onDisconnect = () => {
