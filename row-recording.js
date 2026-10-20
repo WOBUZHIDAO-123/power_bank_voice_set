@@ -8,13 +8,20 @@ export function createRowRecording({ document, window, navigator, URL, report, d
   const update = id => {
     const view = views.get(id); if (!view) return;
     const clip = clips.get(id), capturing = active?.id === id;
+    const pad = String(id).padStart(3, '0');
     view.record.textContent = capturing ? active.phase === 'requesting' ? '取消申请' : active.phase === 'stopping' ? '结束中…' : '■ 正在录音' : '● 录音';
     view.record.classList.toggle('recording', capturing);
+    view.record.setAttribute('aria-label', capturing
+      ? active.phase === 'requesting' ? '编号 ' + pad + '，正在等待麦克风授权，再按一次取消'
+        : active.phase === 'stopping' ? '编号 ' + pad + '，正在结束录音'
+        : '编号 ' + pad + '，正在录音，再按一次结束'
+      : '录制编号 ' + pad);
     view.progress.hidden = !capturing && !clip;
     view.progress.disabled = capturing;
     const seconds = capturing ? Math.floor((Date.now() - active.began) / 1000) : clip?.duration ?? 0;
     const elapsed = !capturing && current === id ? player.currentTime || 0 : 0;
     view.caption.textContent = capturing ? active.phase === 'requesting' ? '等待授权' : seconds + ' 秒 / 60 秒' : (current === id && !player.paused ? '暂停 ' : '▶ ') + Math.floor(elapsed) + ' / ' + Math.floor(seconds) + ' 秒';
+    view.progress.setAttribute('aria-label', '试听编号 ' + pad + ' 的录音，' + view.caption.textContent.replace('▶ ', '').replace('❚❚ ', ''));
     view.bar.value = capturing ? seconds / 60 * 100 : seconds ? elapsed / seconds * 100 : 0;
   };
   const release = session => {
